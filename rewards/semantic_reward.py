@@ -16,7 +16,7 @@ except ImportError:
     ROUGE_AVAILABLE = False
 
 try:
-    from bert_score import score as bert_score
+    from bert_score import BERTScorer
     BERT_SCORE_AVAILABLE = True
 except ImportError:
     BERT_SCORE_AVAILABLE = False
@@ -39,6 +39,20 @@ class SemanticFidelityReward:
         else:
             self.rouge_scorer = None
             logger.warning("ROUGE not available, using fallback")
+            
+        if BERT_SCORE_AVAILABLE:
+            # Initialize BERTScorer once to heavily accelerate training and prevent repeating downloads
+            # We use 'distilroberta-base' to speed up the reward function, or default to 'roberta-large'.
+            import warnings
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                self.bert_scorer = BERTScorer(
+                    lang='en', 
+                    rescale_with_baseline=True,
+                    device='cuda' if torch.cuda.is_available() else 'cpu'
+                )
+        else:
+            self.bert_scorer = None
         
         logger.info(f"Initialized SemanticFidelityReward")
     
@@ -50,28 +64,30 @@ class SemanticFidelityReward:
         """Compute semantic fidelity rewards."""
         assert len(generated_texts) == len(reference_texts)
         
+        # Batch pass for BERTScore to be overwhelmingly faster
+        bert_f1_scores = [0.0] * len(generated_texts)
+        if self.bert_scorer is not None and len(generated_texts) > 0:
+            try:
+                import warnings
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore")
+                    P, R, F1 = self.bert_scorer.score(generated_texts, reference_texts)
+                    bert_f1_scores = F1.tolist()
+            except Exception as e:
+                logger.warning(f"BERTScore failed: {e}")
+        
         rewards = []
         
-        for gen, ref in zip(generated_texts, reference_texts):
+        for i, (gen, ref) in enumerate(zip(generated_texts, reference_texts)):
             if self.rouge_scorer:
                 rouge_scores = self.rouge_scorer.score(ref, gen)
                 rouge_l_f1 = rouge_scores['rougeL'].fmeasure
             else:
                 rouge_l_f1 = self._simple_overlap(gen, ref)
             
-            if BERT_SCORE_AVAILABLE:
-                try:
-                    P, R, F1 = bert_score(
-                        [gen], [ref],
-                        lang='en',
-                        verbose=False,
-                        device='cuda' if torch.cuda.is_available() else 'cpu'
-                    )
-                    bert_f1 = F1.item()
-                    reward = 0.5 * rouge_l_f1 + 0.5 * bert_f1
-                except Exception as e:
-                    logger.warning(f"BERTScore failed: {e}")
-                    reward = rouge_l_f1
+            if self.bert_scorer is not None:
+                bert_f1 = bert_f1_scores[i]
+                reward = 0.5 * rouge_l_f1 + 0.5 * bert_f1
             else:
                 reward = rouge_l_f1
             

@@ -130,31 +130,63 @@ The Metacognitive Medical Digital Twins framework addresses the Socio-Technical 
 
 #### 2. Technical Architecture
 
+```mermaid
+graph TD
+    %% Define Styles
+    classDef data fill:#f4ecec,stroke:#333,stroke-width:2px;
+    classDef process fill:#e1f5fe,stroke:#1565c0,stroke-width:2px;
+    classDef model fill:#e8f5e9,stroke:#0277bd,stroke-width:2px;
+    classDef reward fill:#fff3e0,stroke:#2e7d32,stroke-width:2px;
+
+    %% Data Sources
+    subgraph "Data Integration Layer"
+        MIMIC[(MIMIC-IV\nICU Trajectories)]:::data
+        O1[(Medical-O1\nReasoning Chains)]:::data
+        Ontology[(Clinical Ontology\nLOINC / SNOMED / ICD-10)]:::data
+    end
+
+    %% Internal Processing 
+    subgraph "Metacognitive Stream Processing"
+        Think["<think>\nDeductive Clinical Reasoning"]:::process
+        PState["<patient_state>\nPhysiological State Tracking"]:::process
+        ToM["<theory_of_mind>\nUser Belief Inference"]:::process
+    end
+
+    %% Core Model
+    subgraph "Core Model Architecture"
+        LLM[Foundation Model\ne.g., MedGemma / Llama-3]:::model
+        LoRA[LoRA Adapters\nRank Optimization]:::model
+        LLM --> LoRA
+    end
+
+    %% Alignment Training
+    subgraph "Multi-Objective GRPO Alignment Framework"
+        GRPO{"GRPO Algorithm\n(Policy Optimization)"}:::reward
+        Safety["R_safety\n(Risk Aversion)"]:::reward
+        Emp["R_empathy\n(Patient Alignment)"]:::reward
+        SeM["R_semantic\n(Clinical Fidelity via BERTScore)"]:::reward
+        Pro["R_proactive\n(Traj. Forecasting)"]:::reward
+        Meta["R_metacog\n(Self-Correction)"]:::reward
+    end
+
+    %% Graph Connections
+    MIMIC --> Think
+    O1 --> Think
+    Ontology -.-> PState
+
+    Think --> LLM
+    PState --> LLM
+    ToM --> LLM
+    
+    LoRA --> GRPO
+    GRPO --> Safety & Emp & SeM & Pro & Meta
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Medical Digital Twin                      │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐     │
-│  │   <think>    │  │<patient_state>│  │<user_belief> │     │
-│  │  Deductive   │  │ Physiological │  │  Theory of   │     │
-│  │  Reasoning   │  │    State      │  │     Mind     │     │
-│  └──────┬───────┘  └──────┬────────┘  └──────┬───────┘     │
-│         │                  │                   │             │
-│         └──────────────────┴───────────────────┘             │
-│                            │                                 │
-│                   ┌────────▼────────┐                       │
-│                   │  MedGemma-4B    │                       │
-│                   │  + LoRA (r=16)  │                       │
-│                   └────────┬────────┘                       │
-│                            │                                 │
-└────────────────────────────┼─────────────────────────────────┘
-                             │
-                    ┌────────▼────────┐
-                    │ GRPO Training   │
-                    │  5 Rewards      │
-                    └─────────────────┘
-```
+
+### Key Architectural Pillars
+
+1. **Structured Cognitive Streams**: The framework inherently separates distinct elements of clinical decision-making. Before generating any response, the model executes a mandatory `<think>` chain-of-thought block for deductive medical reasoning mimicking an attending physician. It concurrently leverages a `<patient_state>` construct strictly mapped to ontologies (SNOMED, LOINC), and a specialized `<theory_of_mind>` block to anticipate the user's health literacy and psychological concerns.
+2. **Efficient Parameter Tuning**: Operates over capable foundation models (e.g. Gemma/LLaMA) utilizing highly-optimized Low-Rank Adapters (LoRA `r=16`), ensuring that updating the massive biomedical vocabularies and clinical pathways aligns without inducing catastrophic forgetting or requiring prohibitive multi-node computing clusters. 
+3. **Alignment Engine (GRPO)**: To prevent hallucinations inherent in traditional Supervised Fine-Tuning (SFT), the model is actively stress-tested and pushed towards clinical rigor through Group Relative Policy Optimization (GRPO). Outputs are evaluated dynamically using a robust continuous 5-component composite reward engine, explicitly punishing unsafe extrapolations while promoting clinical empathy and proactive risk mapping.
 
 #### 3. Training Methodology
 
