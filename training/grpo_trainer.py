@@ -179,7 +179,7 @@ def run_grpo_training(
                 all_rewards.append(prompt_rewards)
         
         # Convert to tensors
-        rewards_tensor = torch.tensor(all_rewards, dtype=torch.float32)
+        rewards_tensor = torch.tensor(all_rewards, dtype=torch.float32, device=model.model.device)
         
         # Compute group-relative advantages
         advantages = compute_group_relative_advantages(
@@ -191,19 +191,79 @@ def run_grpo_training(
         # Normalize advantages
         advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
         
-        # Policy update (simplified - full implementation would need log probabilities)
+        # Policy update 
         logger.info(f"  Updating policy...")
         
-        # This is a placeholder for the actual policy update
-        # Full implementation would:
-        # 1. Compute log probabilities of generated responses
-        # 2. Compute importance sampling ratios
-        # 3. Apply PPO clipping
-        # 4. Backpropagate and update
+        model.model.train()
+        total_policy_loss = 0.0
+        total_kl_div = 0.0
         
-        policy_loss = torch.tensor(0.0)  # Placeholder
-        value_loss = torch.tensor(0.0)   # Placeholder
-        kl_div = torch.tensor(0.0)       # Placeholder
+        optimizer.zero_grad()
+        
+        # Process backpropagation per prompt group
+        for p_idx, prompt in enumerate(prompts):
+            adv_subset = advantages[p_idx]
+            
+            for r_idx, response in enumerate(all_responses[p_idx]):
+                # Format full sequence
+                full_text = prompt + response
+                inputs = model.tokenizer(
+                    full_text,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=config.generation_max_length
+                ).to(model.model.device)
+                
+                # Get response length to mask prompt gradients
+                prompt_ids = model.tokenizer(prompt, return_tensors="pt", truncation=True)["input_ids"][0]
+                prompt_len = len(prompt_ids)
+                
+                # Forward pass current policy
+                outputs = model.model(**inputs)
+                logits = outputs.logits
+                
+                # Get log probs of the generated tokens
+                shift_logits = logits[..., :-1, :].contiguous()
+                shift_labels = inputs["input_ids"][..., 1:].contiguous()
+                
+                log_probs_dist = torch.nn.functional.log_softmax(shift_logits, dim=-1)
+                log_probs = torch.gather(log_probs_dist, 2, shift_labels.unsqueeze(-1)).squeeze(-1)
+                
+                # Calculate reference log probs (treating current iteration as reference before update step for simplicity, 
+                # a strict GRPO requires freezing an independent ref model)
+                with torch.no_grad():
+                    ref_log_probs = log_probs.detach()
+                
+                # Only train on the response tokens (mask out prompt log probs)
+                if log_probs.size(1) > prompt_len:
+                    response_log_probs = log_probs[:, prompt_len-1:].sum(dim=1)
+                    ref_response_log_probs = ref_log_probs[:, prompt_len-1:].sum(dim=1)
+                    
+                    # Compute PPO losses
+                    p_loss = compute_ppo_loss(
+                        response_log_probs,
+                        ref_response_log_probs,
+                        adv_subset[r_idx].unsqueeze(0),
+                        clip_range=config.clip_range
+                    )
+                    
+                    kl = compute_kl_divergence(
+                        response_log_probs,
+                        ref_response_log_probs
+                    )
+                    
+                    p_loss.backward()
+                    total_policy_loss += p_loss.item()
+                    total_kl_div += kl.item()
+        
+        optimizer.step()
+        model.model.eval()
+        
+        # Average the losses over all generations
+        num_gens = len(prompts) * config.num_generations_per_prompt
+        policy_loss = torch.tensor(total_policy_loss / max(num_gens, 1))
+        kl_div = torch.tensor(total_kl_div / max(num_gens, 1))
+        value_loss = torch.tensor(0.0) # Value loss mostly tracks critic in raw PPO
         
         # Log statistics
         avg_reward = rewards_tensor.mean().item()
