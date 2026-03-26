@@ -198,7 +198,7 @@ def run_sft_training(model, train_dataset, eval_dataset, config):
         logger.info("="*80)
         logger.info("")
         
-        return train_result
+        return model
         
     except ImportError as e:
         logger.warning(f"transformers library not available: {e}")
@@ -434,11 +434,7 @@ def _basic_training_loop(model, train_dataset, eval_dataset, config, output_dir)
     logger.info("="*80)
     logger.info("")
     
-    return {
-        'training_loss': training_losses[-1] if training_losses else None,
-        'global_step': global_step,
-        'metrics': history
-    }
+    return model
 
 
 def _evaluate(model, eval_loader):
