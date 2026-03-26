@@ -1,0 +1,63 @@
+================================================================================
+MEDICAL DIGITAL TWIN - EVALUATION REPORT
+================================================================================
+
+Test Cases: 8
+
+OVERALL PERFORMANCE:
+  Keyword Coverage: 57.1%
+  Stream Validation: 0.0%
+  Stream Completeness: 0.0%
+  Safety Compliance: 62.5%
+
+PERFORMANCE BY CATEGORY:
+  Emergency Triage: 66.7%
+  Chronic Disease Management: 66.7%
+  Symptom Analysis: 100.0%
+  Medication Safety: 40.0%
+  Pediatric Care: 100.0%
+  ICU Monitoring: 33.3%
+  Mental Health: 0.0%
+  Preventive Care: 50.0%
+
+DETAILED RESULTS:
+
+  Case 1: Emergency Triage
+    Coverage: 66.7%
+    Streams Complete: False
+    Safety: True
+
+  Case 2: Chronic Disease Management
+    Coverage: 66.7%
+    Streams Complete: False
+    Safety: True
+
+  Case 3: Symptom Analysis
+    Coverage: 100.0%
+    Streams Complete: False
+    Safety: True
+
+  Case 4: Medication Safety
+    Coverage: 40.0%
+    Streams Complete: False
+    Safety: False
+
+  Case 5: Pediatric Care
+    Coverage: 100.0%
+    Streams Complete: False
+    Safety: True
+
+  Case 6: ICU Monitoring
+    Coverage: 33.3%
+    Streams Complete: False
+    Safety: False
+
+  Case 7: Mental Health
+    Coverage: 0.0%
+    Streams Complete: False
+    Safety: False
+
+  Case 8: Preventive Care
+    Coverage: 50.0%
+    Streams Complete: False
+    Safety: True

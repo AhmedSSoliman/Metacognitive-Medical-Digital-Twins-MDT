@@ -1,0 +1,980 @@
+# Run everything
+python main.py
+
+# Run tests only
+python main.py --test-only
+
+# Launch web UI
+python main.py --launch-ui
+
+# Run evaluation
+python main.py --evaluate
+
+# Train model
+python main.py --train-sft
+python main.py --train-grpo
+
+
+
+--------------------------------------------------
+#### Proper Research Pipeline:
+
+# STEP 1: Verify System Works (5 minutes)
+python main.py --test-only
+
+# STEP 2: Download Data (one-time setup)
+# - MIMIC-IV from PhysioNet → place in ./mimic-iv-3.1/
+# - Medical-O1 auto-downloads from HuggingFace
+
+# STEP 3: Train Phase 1 - SFT (hours to days)
+python main.py --train-sft --max-patients 1000 --max-o1-examples 5000
+
+# STEP 4: Train Phase 4 - GRPO (hours to days)
+python main.py --train-grpo
+
+# STEP 5: Evaluate Trained Model (30 minutes)
+python main.py --evaluate --output-dir ./results
+
+# STEP 6: Launch Web Interface for Demos
+python main.py --launch-ui --share
+
+
+----------------------------------------
+# Run tests
+python main.py --test-only
+
+# Launch UI
+python main.py --launch-ui
+
+# Train
+python main.py --train-sft --max-patients 1000
+python main.py --train-grpo
+
+# Evaluate
+python main.py --evaluate --output-dir ./results
+
+
+--------------
+# Complete Usage Guide - Medical Digital Twin System
+
+## **📋 Table of Contents**
+
+1. [System Testing](#1-system-testing)
+2. [Web Interface](#2-web-interface)
+3. [Data Preparation](#3-data-preparation)
+4. [Training Pipeline](#4-training-pipeline)
+5. [Evaluation](#5-evaluation)
+6. [Advanced Usage](#6-advanced-usage)
+7. [HiPerGator (UF HPC)](#7-hipergator-uf-hpc)
+8. [Troubleshooting](#8-troubleshooting)
+
+---
+
+## **1. SYSTEM TESTING**
+
+### **Test All Components (Recommended First Step)**
+```bash
+# Run comprehensive system tests
+python main.py --test-only
+```
+
+**What this does:**
+- ✅ Tests all 9 system components
+- ✅ Validates configurations
+- ✅ Checks cognitive stream parsing
+- ✅ Tests Theory of Mind module
+- ✅ Validates all 5 reward components
+- ✅ Tests ontology (LOINC, SNOMED-CT, reference ranges)
+- ✅ Checks data processors
+- ✅ Tests model initialization
+- ✅ Runs end-to-end inference
+
+**Expected Output:**
+```
+================================================================================
+TEST SUMMARY
+================================================================================
+✓ PASSED: configurations
+✓ PASSED: cognitive_streams
+✓ PASSED: theory_of_mind
+✓ PASSED: rewards
+✓ PASSED: composite_engine
+✓ PASSED: ontology
+✓ PASSED: data_processing
+✓ PASSED: model
+✓ PASSED: end_to_end
+
+Total: 9/9 tests passed (100.0%)
+================================================================================
+```
+
+**Time:** ~2-3 minutes
+
+---
+
+### **Run Demo Mode (Tests + Clinical Demonstration)**
+```bash
+# Run tests and see clinical case demonstration
+python main.py
+```
+
+**What this does:**
+- Runs all tests (same as `--test-only`)
+- Shows clinical case demonstration
+- Displays expected MDT response structure
+- Provides quick start commands
+
+**Time:** ~3-4 minutes
+
+---
+
+## **2. WEB INTERFACE**
+
+### **Launch Local Web Interface**
+```bash
+# Start interactive web UI
+python main.py --launch-ui
+```
+
+**Access:**
+- **Local:** http://localhost:7860
+- **Network:** http://YOUR_IP:7860
+
+**Features:**
+- Interactive chat with Medical Digital Twin
+- Real-time cognitive stream visualization
+- Collapsible reasoning panels
+- Theory of Mind inference display
+
+**To stop:** Press `Ctrl+C`
+
+---
+
+### **Launch with Public Sharing**
+```bash
+# Create shareable public link (72-hour access)
+python main.py --launch-ui --share
+```
+
+**What this does:**
+- Creates Gradio public URL
+- Accessible from anywhere
+- Link expires after 72 hours
+
+**Example Output:**
+```
+✓ Launching web interface...
+   Access at: http://localhost:7860
+   Public URL: https://XXXXX.gradio.live
+   Press Ctrl+C to stop
+```
+
+---
+
+## **3. DATA PREPARATION**
+
+### **Step 1: Download MIMIC-IV v3.1**
+
+**Prerequisites:**
+```bash
+# 1. Create PhysioNet account at https://physionet.org/
+# 2. Complete CITI training: "Data or Specimens Only Research"
+# 3. Request access to MIMIC-IV v3.1
+# 4. Wait for approval (typically 24-48 hours)
+```
+
+**Download Dataset:**
+```bash
+# Option A: Using wget (after approval)
+wget -r -N -c -np --user YOUR_USERNAME --ask-password \
+  https://physionet.org/files/mimiciv/3.1/
+
+# Option B: Follow PhysioNet download instructions
+# Visit: https://physionet.org/content/mimiciv/3.1/
+```
+
+---
+
+### **Step 2: Verify Data Structure**
+
+```bash
+# Check directory structure
+ls -lh mimiciv/3.1/icu/
+ls -lh mimiciv/3.1/hosp/
+
+# Expected structure:
+# mimiciv/3.1/
+# ├── icu/
+# │   ├── icustays.csv (or .csv.gz)
+# │   ├── chartevents.csv (or .csv.gz)
+# │   └── ...
+# ├── hosp/
+# │   ├── patients.csv (or .csv.gz)
+# │   ├── admissions.csv (or .csv.gz)
+# │   └── ...
+```
+
+---
+
+### **Step 3: Configure Data Path**
+
+**Edit `config/configs.py`:**
+```python
+@dataclass
+class DataConfig:
+    mimic_root_dir: str = "mimiciv/3.1"  # Update this path
+    mimic_version: str = "3.1"
+    # ... rest of config
+```
+
+---
+
+### **Step 4: Verify Data Accessibility**
+
+```bash
+# Quick verification test
+python -c "
+from data.mimic_processor import MIMICProcessor
+from config.configs import DataConfig
+processor = MIMICProcessor(DataConfig())
+print('✓ MIMIC-IV available:', processor.check_availability())
+"
+```
+
+**Expected Output:**
+```
+Initialized MIMIC-IV v3.1 processor
+Root directory: mimiciv/3.1
+All required MIMIC-IV files found
+✓ MIMIC-IV available: True
+```
+
+---
+
+## **4. TRAINING PIPELINE**
+
+### **Phase 1: Supervised Fine-Tuning (SFT)**
+
+#### **Small Test Run (Quick)**
+```bash
+# Process 10 patients (for testing pipeline)
+python main.py --train-sft --max-patients 10
+
+# Expected time: 5-15 minutes
+# Expected output: 5-10 training examples
+```
+
+---
+
+#### **Medium Run (Development)**
+```bash
+# Process 100 patients
+python main.py --train-sft --max-patients 100 --max-o1-examples 500
+
+# Expected time: 30 minutes - 2 hours
+# Expected output: 50-100 training examples
+```
+
+---
+
+#### **Production Run (Full Training)**
+```bash
+# Process 1000 patients (default)
+python main.py --train-sft
+
+# With explicit parameters:
+python main.py --train-sft \
+  --max-patients 1000 \
+  --max-o1-examples 5000 \
+  --output-dir ./outputs
+
+# Expected time: 8-24 hours on A100 80GB
+# Expected output: 500-1000 training examples
+```
+
+---
+
+#### **Large-Scale Run (Research)**
+```bash
+# Process maximum patients
+python main.py --train-sft \
+  --max-patients 10000 \
+  --max-o1-examples 10000 \
+  --output-dir ./runs/$(date +%Y%m%d_%H%M%S)
+
+# Expected time: 24-72 hours
+# Expected output: 5000+ training examples
+```
+
+---
+
+#### **Demo Model (Pipeline Testing)**
+```bash
+# Test training pipeline without downloading MedGemma
+python main.py --train-sft \
+  --use-demo \
+  --max-patients 50 \
+  --max-o1-examples 100
+
+# Uses GPT-2 instead of MedGemma-4B
+# Faster for testing, but not for production
+```
+
+---
+
+### **Phase 4: GRPO Alignment (Reinforcement Learning)**
+
+```bash
+# Basic GRPO training (requires SFT checkpoint)
+python main.py --train-grpo
+
+# With custom output directory
+python main.py --train-grpo --output-dir ./grpo_training
+
+# Expected time: 12-48 hours on A100 80GB
+# Requires: Completed SFT training
+```
+
+**Prerequisites:**
+- Must have run `--train-sft` first
+- SFT checkpoint must exist in `./outputs/sft/`
+
+---
+
+### **Training Output Locations**
+
+**SFT Outputs:**
+```
+./outputs/sft/
+├── checkpoint-500/
+├── checkpoint-1000/
+├── checkpoint-1500/
+└── final_model/
+    ├── config.json
+    ├── model.safetensors
+    ├── adapter_config.json
+    └── adapter_model.safetensors
+```
+
+**GRPO Outputs:**
+```
+./outputs/grpo/
+├── iteration_50/
+├── iteration_100/
+├── iteration_150/
+└── final_policy/
+    ├── config.json
+    ├── model.safetensors
+    └── reward_statistics.json
+```
+
+**Processed Data:**
+```
+./outputs/
+├── mimic_processed.json
+└── logs/
+    ├── sft/
+    └── grpo/
+```
+
+---
+
+## **5. EVALUATION**
+
+### **Evaluate Trained Model**
+```bash
+# Run full evaluation suite on trained model
+python main.py --evaluate
+```
+
+**Metrics Evaluated:**
+- Keyword Coverage
+- Stream Completeness
+- Safety Compliance
+- Self-Correction Rate
+- Hallucination Detection
+- Clinical Accuracy
+- Empathy Calibration
+- Proactive Warning Rate
+
+---
+
+### **Evaluate with Custom Output**
+```bash
+# Save results to specific directory
+python main.py --evaluate --output-dir ./evaluation_results
+
+# With timestamp
+python main.py --evaluate \
+  --output-dir ./eval_$(date +%Y%m%d_%H%M%S)
+```
+
+---
+
+### **Evaluate Demo Model (Testing)**
+```bash
+# Test evaluation pipeline without trained model
+python main.py --evaluate --use-demo
+```
+
+---
+
+### **Compare Against Baseline**
+```bash
+# Compare trained model vs base model
+python main.py --evaluate --compare-base
+```
+
+---
+
+### **Evaluation Output Files**
+
+```bash
+# Generated files
+./evaluation_results/
+├── evaluation_results_20260319_183045.csv
+├── evaluation_report_20260319_183045.txt
+└── metrics_summary.json
+```
+
+**View results:**
+```bash
+# View report
+cat evaluation_results/evaluation_report_*.txt
+
+# View CSV with pandas
+python -c "
+import pandas as pd
+df = pd.read_csv('evaluation_results/evaluation_results_*.csv')
+print(df.describe())
+"
+```
+
+---
+
+## **6. ADVANCED USAGE**
+
+### **Custom Training Workflows**
+
+#### **Incremental Training**
+```bash
+# Train in stages
+python main.py --train-sft --max-patients 100 --output-dir ./stage1
+python main.py --train-sft --max-patients 500 --output-dir ./stage2
+python main.py --train-sft --max-patients 1000 --output-dir ./stage3
+```
+
+---
+
+#### **Parallel Experiments**
+```bash
+# Run multiple experiments
+for n in 100 500 1000; do
+  python main.py --train-sft \
+    --max-patients $n \
+    --output-dir ./experiments/patients_$n &
+done
+```
+
+---
+
+### **Python API Usage**
+
+#### **Import and Use Components**
+```python
+# Example: Use components programmatically
+from models.mdt_model import MedicalDigitalTwinModel
+from core.cognitive_streams import CognitiveStreamParser
+from rewards.composite_engine import CompositeRewardEngine
+from config.configs import ModelConfig, CognitiveArchitectureConfig, GRPOConfig
+
+# Initialize
+model_config = ModelConfig()
+model = MedicalDigitalTwinModel(model_config, use_demo_model=True)
+
+# Generate response
+clinical_query = "72 yo male with HR 125, BP 85/50, Lactate rising from 1.8 to 3.2"
+response = model.generate(clinical_query, max_length=512)
+print(response)
+
+# Parse streams
+cog_config = CognitiveArchitectureConfig()
+parser = CognitiveStreamParser(cog_config)
+streams = parser.parse(response)
+
+print("Clinical Reasoning:", streams.think)
+print("Patient State:", streams.patient_state)
+print("User Belief:", streams.user_belief)
+
+# Validate
+is_valid, error = parser.validate(streams)
+print(f"Valid: {is_valid}, Error: {error}")
+```
+
+---
+
+#### **Batch Processing**
+```python
+import pandas as pd
+from tqdm import tqdm
+
+# Load cases
+cases = pd.read_csv("clinical_cases.csv")
+
+# Process batch
+results = []
+for _, case in tqdm(cases.iterrows(), total=len(cases)):
+    response = model.generate(case['query'], max_length=512)
+    streams = parser.parse(response)
+    
+    results.append({
+        'case_id': case['id'],
+        'response': response,
+        'think': streams.think,
+        'patient_state': streams.patient_state,
+        'user_belief': streams.user_belief
+    })
+
+# Save results
+pd.DataFrame(results).to_csv("batch_results.csv", index=False)
+```
+
+---
+
+#### **Ontology Validation**
+```python
+from utils.ontology_validator import OntologyValidator
+
+# Initialize validator
+validator = OntologyValidator()
+
+# Validate patient state
+patient_state = "HR: 150 bpm [LOINC:8867-4], Lactate: 5.0 mmol/L [LOINC:2524-7]"
+validations = validator.extract_and_validate_patient_state(patient_state)
+
+# Print validation results
+for biomarker, result in validations.items():
+    print(f"{biomarker}: {result['status']} - {result['message']}")
+
+# Generate full report
+report = validator.generate_validation_report(patient_state)
+print(report)
+```
+
+---
+
+#### **Safety Reward Analysis**
+```python
+from rewards.safety_reward import BiologicalSafetyReward
+
+# Initialize safety reward
+safety = BiologicalSafetyReward()
+
+# Test patient state
+patient_state = "HR: 150 bpm [LOINC:8867-4], Lactate: 5.0 mmol/L [LOINC:2524-7]"
+
+# Get detailed analysis
+result = safety.validate_and_explain(patient_state)
+
+print(f"Safety Score: {result['score']:.2f}")
+print(f"Summary: {result['summary']}")
+print(f"Is Safe: {result['is_safe']}")
+print(f"\nViolations:")
+for v in result['violations']:
+    print(f"  - {v['severity']}: {v['message']}")
+```
+
+---
+
+### **Monitoring and Debugging**
+
+#### **Monitor GPU Usage**
+```bash
+# Watch GPU utilization in real-time
+watch -n 1 nvidia-smi
+
+# Detailed GPU info
+nvidia-smi -l 1
+
+# Check specific GPU
+nvidia-smi -i 0
+```
+
+---
+
+#### **Monitor Training Progress**
+```bash
+# TensorBoard (if logging enabled)
+tensorboard --logdir ./outputs/logs/sft --port 6006
+
+# Then access at http://localhost:6006
+```
+
+---
+
+#### **Check Logs**
+```bash
+# View training logs
+tail -f outputs/logs/sft/training.log
+
+# View all logs
+tail -f outputs/logs/sft/*.log
+
+# Search for errors
+grep -i error outputs/logs/sft/*.log
+```
+
+---
+
+#### **Debug Memory Issues**
+```bash
+# Check available memory
+free -h
+
+# Monitor memory during training
+watch -n 1 'free -h && nvidia-smi'
+
+# Kill process if needed
+pkill -f "python main.py"
+
+# Find process ID
+ps aux | grep "python main.py"
+kill -9 PID
+```
+
+---
+
+## **7. HIPERGATOR (UF HPC)**
+
+### **Interactive Session**
+
+```bash
+# Request interactive GPU node
+srun --partition=gpu --gpus=a100:1 --mem=64gb --time=08:00:00 --pty bash
+
+# Activate conda environment
+module load conda
+conda activate digitaltwins_env
+
+# Run tests
+python main.py --test-only
+
+# Run training
+python main.py --train-sft --max-patients 1000
+```
+
+---
+
+### **Batch Job Submission**
+
+#### **Create SLURM Script**
+```bash
+cat > train_sft.sh <<'EOF'
+#!/bin/bash
+#SBATCH --job-name=mdt_sft
+#SBATCH --output=logs/sft_%j.out
+#SBATCH --error=logs/sft_%j.err
+#SBATCH --partition=gpu
+#SBATCH --gpus=a100:1
+#SBATCH --mem=64gb
+#SBATCH --time=24:00:00
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=your.email@ufl.edu
+
+# Load modules
+module load conda
+conda activate digitaltwins_env
+
+# Run training
+python main.py --train-sft \
+  --max-patients 1000 \
+  --max-o1-examples 5000 \
+  --output-dir /blue/your-group/$USER/mdt-outputs
+
+# Optional: Run evaluation after training
+python main.py --evaluate \
+  --output-dir /blue/your-group/$USER/mdt-outputs/eval
+EOF
+```
+
+---
+
+#### **Submit and Monitor Job**
+```bash
+# Create logs directory
+mkdir -p logs
+
+# Submit job
+sbatch train_sft.sh
+
+# Check job status
+squeue -u $USER
+
+# Monitor progress
+tail -f logs/sft_JOBID.out
+
+# Cancel job if needed
+scancel JOBID
+```
+
+---
+
+#### **View Job Details**
+```bash
+# Detailed job info
+scontrol show job JOBID
+
+# Job history
+sacct -j JOBID --format=JobID,JobName,Elapsed,State,ExitCode
+
+# All your jobs today
+sacct --starttime $(date +%Y-%m-%d) --user=$USER
+```
+
+---
+
+#### **Advanced SLURM Options**
+```bash
+# Multiple GPUs
+#SBATCH --gpus=a100:4
+
+# Specific GPU partition
+#SBATCH --partition=hpg-ai
+
+# Array jobs (multiple experiments)
+#SBATCH --array=1-10
+
+# Dependencies (run after another job)
+#SBATCH --dependency=afterok:JOBID
+```
+
+---
+
+## **8. TROUBLESHOOTING**
+
+### **Common Issues and Solutions**
+
+#### **Issue: Tests Fail**
+```bash
+# Solution 1: Check Python version (requires 3.8+)
+python --version
+
+# Solution 2: Verify dependencies
+pip check
+
+# Solution 3: Reinstall dependencies
+pip install --force-reinstall -r requirements.txt
+
+# Solution 4: Check CUDA
+python -c "import torch; print('CUDA:', torch.cuda.is_available())"
+```
+
+---
+
+#### **Issue: Training Fails - Out of Memory**
+
+**Solution 1: Reduce Batch Size**
+```python
+# Edit config/configs.py
+@dataclass
+class SFTConfig:
+    batch_size: int = 2  # Instead of 4
+    gradient_accumulation_steps: int = 16  # Instead of 8
+```
+
+**Solution 2: Use Smaller Model**
+```bash
+# Use demo model for testing
+python main.py --train-sft --use-demo --max-patients 10
+```
+
+**Solution 3: Clear GPU Cache**
+```python
+python -c "import torch; torch.cuda.empty_cache()"
+```
+
+---
+
+#### **Issue: Training Killed During chartevents**
+
+**Solution: Already fixed in updated code**
+```python
+# The updated data/mimic_processor.py uses chunked reading
+# This prevents memory overflow
+
+# Verify you have the latest version:
+grep -n "chunk_size=1000000" data/mimic_processor.py
+
+# Should show: chunk_size=1000000 in load_chartevents_for_stays
+```
+
+---
+
+#### **Issue: MIMIC-IV Files Not Found**
+
+**Solution 1: Check Path**
+```bash
+# Verify path in config
+python -c "
+from config.configs import DataConfig
+config = DataConfig()
+print('MIMIC path:', config.mimic_root_dir)
+"
+
+# Check if path exists
+ls -lh mimiciv/3.1/icu/
+```
+
+**Solution 2: Update Configuration**
+```python
+# Edit config/configs.py
+@dataclass
+class DataConfig:
+    mimic_root_dir: str = "YOUR_ACTUAL_PATH"  # Update this
+```
+
+---
+
+#### **Issue: Gradio Not Available**
+
+**Solution:**
+```bash
+# Install Gradio
+pip install gradio
+
+# Then launch UI
+python main.py --launch-ui
+```
+
+---
+
+### **Performance Optimization**
+
+#### **Speed Up Training**
+```bash
+# Use fewer patients for testing
+python main.py --train-sft --max-patients 100
+
+# Use more GPUs (if available)
+# Edit training script to use DataParallel
+
+# Use mixed precision
+# Already enabled in configs (bf16=True)
+```
+
+---
+
+#### **Reduce Memory Usage**
+```python
+# config/configs.py
+@dataclass
+class SFTConfig:
+    batch_size: int = 1  # Minimum batch size
+    gradient_accumulation_steps: int = 32  # Accumulate more
+    dataloader_num_workers: int = 2  # Reduce workers
+```
+
+---
+
+### **Maintenance Commands**
+
+#### **Clean Outputs**
+```bash
+# Remove all training outputs
+rm -rf outputs/
+
+# Remove specific training run
+rm -rf outputs/sft/checkpoint-*
+
+# Keep only final models
+find outputs/ -type d -name "checkpoint-*" -exec rm -rf {} +
+```
+
+---
+
+#### **Clean Cache**
+```bash
+# Clear HuggingFace cache
+rm -rf ~/.cache/huggingface/
+
+# Clear Python cache
+find . -type d -name "__pycache__" -exec rm -rf {} +
+find . -type f -name "*.pyc" -delete
+
+# Clear all caches
+rm -rf ~/.cache/
+```
+
+---
+
+#### **Update Dependencies**
+```bash
+# Update all packages
+pip install --upgrade -r requirements.txt
+
+# Update specific package
+pip install --upgrade transformers
+
+# Reinstall from scratch
+pip uninstall -y -r requirements.txt
+pip install -r requirements.txt
+```
+
+---
+
+## **📚 Quick Reference Card**
+
+```bash
+# TESTING
+python main.py --test-only                    # Run all tests (9/9)
+python main.py                                # Tests + demo
+
+# INTERFACE  
+python main.py --launch-ui                    # Local web UI
+python main.py --launch-ui --share            # Public link
+
+# TRAINING
+python main.py --train-sft                    # SFT (default 1000 patients)
+python main.py --train-sft --max-patients 100 # SFT (100 patients)
+python main.py --train-grpo                   # GRPO alignment
+
+# EVALUATION
+python main.py --evaluate                     # Evaluate model
+python main.py --evaluate --compare-base      # Compare vs baseline
+
+# CUSTOM OPTIONS
+--max-patients N          # Limit MIMIC patients
+--max-o1-examples N       # Limit Medical-O1 examples
+--use-demo                # Use GPT-2 for testing
+--output-dir PATH         # Custom output location
+--share                   # Create public Gradio link
+```
+
+---
+
+## **🎯 Recommended Workflow**
+
+```bash
+# 1. First Time Setup (One-time)
+python main.py --test-only                    # Verify system (3 min)
+# Download MIMIC-IV v3.1 (manual step)
+
+# 2. Development Cycle
+python main.py --train-sft --max-patients 10  # Test pipeline (5 min)
+python main.py --train-sft --max-patients 100 # Small training (1 hour)
+python main.py --evaluate                     # Check results (5 min)
+
+# 3. Production Training
+python main.py --train-sft --max-patients 1000 # Full SFT (8-24 hours)
+python main.py --train-grpo                   # GRPO alignment (12-48 hours)
+python main.py --evaluate                     # Final evaluation
+
+# 4. Deployment
+python main.py --launch-ui                    # Launch interface
+```
+
+---
+
+**Your complete Medical Digital Twin system is ready!** 🚀
+
+Start with: `python main.py --test-only`
