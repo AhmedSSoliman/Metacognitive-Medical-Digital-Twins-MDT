@@ -110,10 +110,15 @@ class DataConfig:
     mimic_root_dir: str = "mimiciv/3.1"  # Root directory for MIMIC-IV v3.1
     mimic_version: str = "3.1"  # Dataset version (important for schema changes)
     min_icu_stay_hours: int = 24  # Filter stays shorter than this duration
+    max_patients: int = 1000  # Maximum number of patients to process
+    mimic_diagnosis_filter: List[str] = field(default_factory=lambda: [
+        "sepsis", "pneumonia", "heart_failure", "acute_mi"
+    ])  # Filter to these diagnoses
     
     # Medical-O1 Reasoning Dataset
     medical_o1_dataset: str = "FreedomIntelligence/medical-o1-reasoning-SFT"
     medical_o1_config: str = "en"  # Config: 'en', 'zh', 'en_mix', 'zh_mix'
+    max_o1_examples: int = 5000  # Maximum number of Medical-O1 examples to load
     
     
     # LOINC (Logical Observation Identifiers Names and Codes) mappings
