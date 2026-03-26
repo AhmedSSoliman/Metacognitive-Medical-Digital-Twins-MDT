@@ -136,12 +136,13 @@ def run_grpo_training(
         # Sample batch of prompts
         try:
             batch = next(iter(train_dataloader))
-            prompts = batch['prompt']
+            # With batch_size=1, batch['prompt'] should be a single string
+            prompts = [batch['prompt']] if isinstance(batch['prompt'], str) else batch['prompt']
         except StopIteration:
             logger.warning("DataLoader exhausted, restarting...")
             train_dataloader = iter(train_dataloader)
             batch = next(train_dataloader)
-            prompts = batch['prompt']
+            prompts = [batch['prompt']] if isinstance(batch['prompt'], str) else batch['prompt']
         
         # Generate K responses per prompt
         logger.info(f"  Generating {config.num_generations_per_prompt} responses per prompt...")
