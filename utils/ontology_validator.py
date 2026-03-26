@@ -61,6 +61,10 @@ class OntologyValidator:
         """Check if SNOMED-CT code is valid."""
         return code in self.snomed_codes.values()
     
+    def validate_icd10_code(self, code: str) -> bool:
+        """Check if ICD-10 code is valid."""
+        return code in self.icd10_codes.values()
+    
     def validate_biomarker_value(
         self,
         biomarker: str,

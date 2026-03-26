@@ -246,6 +246,23 @@ class MIMICProcessor:
         
         return df
     
+    def load_icd_diagnoses(self) -> pd.DataFrame:
+        """
+        Load ICD-10 diagnoses table.
+        
+        Returns:
+            DataFrame with ICD diagnosis information
+        """
+        file_path = self._find_file('hosp/diagnoses_icd.csv.gz')
+        if file_path is None:
+            raise FileNotFoundError("diagnoses_icd file not found")
+        
+        logger.info(f"Loading ICD diagnoses from: {file_path}")
+        df = pd.read_csv(file_path)
+        logger.info(f"Loaded {len(df)} ICD diagnoses")
+        
+        return df
+    
     def extract_vital_signs(
         self,
         stay_id: int,
