@@ -63,7 +63,8 @@ class CognitiveStreamDataset(Dataset):
         return {
             'input_ids': input_ids,
             'attention_mask': attention_mask,
-            'labels': labels
+            'labels': labels,
+            'prompt': prompt  # Include raw prompt for GRPO training
         }
     
     def _construct_prompt(self, example: Dict) -> str:
