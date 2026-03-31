@@ -259,6 +259,12 @@ class GRPOConfig:
     # Reproducibility
     seed: int = 42
 
+    # Optional fast sanity-check mode (for quick diagnostics)
+    sanity_check_mode: bool = False  # If True, clamp run to tiny settings below
+    sanity_num_iterations: int = 2  # Max iterations when sanity mode is enabled
+    sanity_num_generations_per_prompt: int = 2  # Max K generations in sanity mode
+    sanity_max_prompts_per_batch: int = 2  # Max prompts consumed from each sampled batch
+
 
 @dataclass
 class EvaluationConfig:

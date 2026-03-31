@@ -76,4 +76,9 @@ docs/_build/
 
 # Logs
 logs/
+
+# HPC crash/core dumps and local runtime artifacts
+core.python-*
+core.*
+.gradio/
 *.log

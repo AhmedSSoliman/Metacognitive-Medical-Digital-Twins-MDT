@@ -565,11 +565,39 @@ def handle_train_grpo(args):
     
     model_config = ModelConfig()
     model = MedicalDigitalTwinModel(model_config, use_demo_model=False)
+
+    # Prepare GRPO config early (needed for resume path resolution)
+    grpo_config = GRPOConfig()
+    if args.output_dir:
+        output_path = Path(args.output_dir)
+        grpo_config.output_dir = str(output_path / "grpo")
+
+    if args.grpo_iterations is not None:
+        grpo_config.num_iterations = args.grpo_iterations
     
-    # Load checkpoint
+    # Load checkpoint (SFT default; optionally resume from latest GRPO checkpoint)
+    load_path = checkpoint_path
+    if args.resume_grpo:
+        grpo_output = Path(grpo_config.output_dir)
+        candidates = []
+        if grpo_output.exists():
+            for child in grpo_output.iterdir():
+                if child.is_dir() and child.name.startswith("iteration_"):
+                    try:
+                        iteration_num = int(child.name.replace("iteration_", "", 1))
+                        candidates.append((iteration_num, child))
+                    except ValueError:
+                        continue
+        if candidates:
+            candidates.sort(key=lambda x: x[0])
+            load_path = candidates[-1][1]
+            print(f"✓ Resuming from latest GRPO checkpoint: {load_path}")
+        else:
+            print("⚠️  --resume-grpo set but no GRPO checkpoints found; using SFT checkpoint")
+
     try:
-        model.load_checkpoint(str(checkpoint_path))
-        print("✓ SFT model loaded")
+        model.load_checkpoint(str(load_path))
+        print(f"✓ Model checkpoint loaded from: {load_path}")
     except Exception as e:
         print(f"⚠️  Could not load checkpoint: {e}")
         print("Continuing with base model...")
@@ -579,12 +607,7 @@ def handle_train_grpo(args):
     print("STEP 2: Initializing Reward Engine")
     print("-"*80 + "\n")
     
-    grpo_config = GRPOConfig()
-    
-    # Update output directory if specified
-    if args.output_dir:
-        output_path = Path(args.output_dir)
-        grpo_config.output_dir = str(output_path / "grpo")
+    # GRPO config already initialized above (with optional overrides)
     
     reward_engine = CompositeRewardEngine(
         w_semantic=grpo_config.w_semantic,
@@ -644,6 +667,10 @@ def handle_train_grpo(args):
     print("\n" + "-"*80)
     print("STEP 4: Running GRPO Training")
     print("-"*80 + "\n")
+
+    print(f"GRPO output dir: {grpo_config.output_dir}")
+    print(f"Target iterations: {grpo_config.num_iterations}")
+    print(f"Resume mode: {args.resume_grpo}")
     
     run_grpo_training(model, train_dataloader, grpo_config, reward_engine)
     
@@ -732,8 +759,17 @@ def handle_launch_ui(args):
     cog_config = CognitiveArchitectureConfig()
     grpo_config = GRPOConfig()
     
-    print("Initializing components...")
-    model = MedicalDigitalTwinModel(model_config, use_demo_model=True)
+    use_demo = not args.use_prod
+    
+    print(f"Initializing components (Demo Model: {use_demo})...")
+    model = MedicalDigitalTwinModel(model_config, use_demo_model=use_demo)
+    
+    if not use_demo and hasattr(args, 'checkpoint_path'):
+        try:
+            model.load_checkpoint(args.checkpoint_path)
+        except Exception as e:
+            print(f"Warning: Could not load checkpoint from {args.checkpoint_path}: {e}")
+            
     parser = CognitiveStreamParser(cog_config)
     engine = CompositeRewardEngine(
         w_semantic=grpo_config.w_semantic,
@@ -791,6 +827,17 @@ For more information, visit: https://github.com/ahmedsoliman/medical-digital-twi
         help="Launch Gradio web interface"
     )
     parser.add_argument(
+        "--use-prod",
+        action="store_true",
+        help="Use production model instead of demo model for UI or Eval"
+    )
+    parser.add_argument(
+        "--checkpoint-path",
+        type=str,
+        default="outputs/sft",
+        help="Path to trained model checkpoint"
+    )
+    parser.add_argument(
         "--train-sft",
         action="store_true",
         help="Run supervised fine-tuning (Phase 1)"
@@ -799,6 +846,17 @@ For more information, visit: https://github.com/ahmedsoliman/medical-digital-twi
         "--train-grpo",
         action="store_true",
         help="Run GRPO alignment (Phase 4)"
+    )
+    parser.add_argument(
+        "--resume-grpo",
+        action="store_true",
+        help="Resume GRPO from latest iteration checkpoint in output dir"
+    )
+    parser.add_argument(
+        "--grpo-iterations",
+        type=int,
+        default=None,
+        help="Override GRPO total target iterations (useful for walltime chunking)"
     )
     parser.add_argument(
         "--evaluate",

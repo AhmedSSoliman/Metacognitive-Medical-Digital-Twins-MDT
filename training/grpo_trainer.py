@@ -23,6 +23,7 @@ Institution: University of Florida, Health Outcomes & Biomedical Informatics (HO
 """
 
 import logging
+from copy import deepcopy
 import torch
 import torch.nn.functional as F
 from typing import Dict, List, Optional
@@ -33,6 +34,101 @@ import json
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+
+def _save_grpo_artifacts(output_dir: Path, training_stats: Dict[str, List[float]]) -> None:
+    """Persist GRPO stats to JSON/CSV and plot metrics figure."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # JSON snapshot
+    with open(output_dir / 'training_stats.json', 'w') as f:
+        json.dump(training_stats, f, indent=2)
+
+    # CSV snapshot
+    csv_path = output_dir / 'training_stats.csv'
+    keys = list(training_stats.keys())
+    row_count = len(training_stats.get('iterations', []))
+    with open(csv_path, 'w') as f:
+        f.write(','.join(keys) + '\n')
+        for idx in range(row_count):
+            row = []
+            for key in keys:
+                values = training_stats.get(key, [])
+                row.append(str(values[idx]) if idx < len(values) else '')
+            f.write(','.join(row) + '\n')
+
+    # Plot snapshot (best-effort)
+    try:
+        import matplotlib.pyplot as plt
+
+        x = training_stats.get('iterations', [])
+        if not x:
+            return
+
+        fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+        axes[0, 0].plot(x, training_stats.get('rewards', []), label='Total Reward', color='tab:blue')
+        axes[0, 0].set_title('Average Total Reward')
+        axes[0, 0].set_xlabel('Iteration')
+        axes[0, 0].set_ylabel('Reward')
+        axes[0, 0].grid(alpha=0.25)
+
+        axes[0, 1].plot(x, training_stats.get('policy_losses', []), label='Policy Loss', color='tab:red')
+        axes[0, 1].set_title('Policy Loss')
+        axes[0, 1].set_xlabel('Iteration')
+        axes[0, 1].set_ylabel('Loss')
+        axes[0, 1].grid(alpha=0.25)
+
+        axes[1, 0].plot(x, training_stats.get('kl_divergences', []), label='KL Divergence', color='tab:green')
+        axes[1, 0].set_title('KL Divergence')
+        axes[1, 0].set_xlabel('Iteration')
+        axes[1, 0].set_ylabel('KL')
+        axes[1, 0].grid(alpha=0.25)
+
+        axes[1, 1].plot(x, training_stats.get('semantic_rewards', []), label='Semantic', alpha=0.9)
+        axes[1, 1].plot(x, training_stats.get('metacognitive_rewards', []), label='Metacognitive', alpha=0.9)
+        axes[1, 1].plot(x, training_stats.get('empathy_rewards', []), label='Empathy', alpha=0.9)
+        axes[1, 1].plot(x, training_stats.get('proactivity_rewards', []), label='Proactivity', alpha=0.9)
+        axes[1, 1].plot(x, training_stats.get('safety_rewards', []), label='Safety', alpha=0.9)
+        axes[1, 1].set_title('Reward Components')
+        axes[1, 1].set_xlabel('Iteration')
+        axes[1, 1].set_ylabel('Component Score')
+        axes[1, 1].grid(alpha=0.25)
+        axes[1, 1].legend(fontsize=8)
+
+        fig.tight_layout()
+        fig.savefig(output_dir / 'training_curves.png', dpi=180, bbox_inches='tight')
+        plt.close(fig)
+    except Exception as e:
+        logger.warning(f"Could not create GRPO training plot: {e}")
+
+
+def _find_latest_grpo_iteration(output_dir: Path) -> int:
+    """Find latest completed GRPO iteration from checkpoint dirs and stats."""
+    latest = 0
+
+    # From checkpoint folders
+    if output_dir.exists():
+        for child in output_dir.iterdir():
+            if child.is_dir() and child.name.startswith("iteration_"):
+                raw = child.name.replace("iteration_", "", 1)
+                try:
+                    latest = max(latest, int(raw))
+                except ValueError:
+                    continue
+
+    # From stats length
+    stats_path = output_dir / 'training_stats.json'
+    if stats_path.exists():
+        try:
+            with open(stats_path, 'r') as f:
+                stats = json.load(f)
+            iter_list = stats.get('iterations', [])
+            if iter_list:
+                latest = max(latest, int(iter_list[-1]))
+        except Exception:
+            pass
+
+    return latest
 
 
 def run_grpo_training(
@@ -81,6 +177,29 @@ def run_grpo_training(
     logger.info(f"  Target KL: {config.target_kl}")
     logger.info(f"  GAE lambda: {config.gae_lambda}")
     logger.info("")
+
+    # Optional fast sanity mode (backward-compatible via getattr)
+    # Add these attributes to GRPOConfig at runtime if desired:
+    #   sanity_check_mode: bool
+    #   sanity_num_iterations: int
+    #   sanity_num_generations_per_prompt: int
+    #   sanity_max_prompts_per_batch: int
+    sanity_mode = bool(getattr(config, "sanity_check_mode", False))
+    requested_num_iterations = config.num_iterations
+    requested_num_generations = config.num_generations_per_prompt
+    max_prompts_per_batch = max(1, int(getattr(config, "sanity_max_prompts_per_batch", config.batch_size)))
+
+    if sanity_mode:
+        sanity_iters = max(1, int(getattr(config, "sanity_num_iterations", 2)))
+        sanity_gens = max(1, int(getattr(config, "sanity_num_generations_per_prompt", 2)))
+        config.num_iterations = min(config.num_iterations, sanity_iters)
+        config.num_generations_per_prompt = min(config.num_generations_per_prompt, sanity_gens)
+
+        logger.info("SANITY MODE ENABLED")
+        logger.info(f"  Iterations: {requested_num_iterations} -> {config.num_iterations}")
+        logger.info(f"  Generations/prompt: {requested_num_generations} -> {config.num_generations_per_prompt}")
+        logger.info(f"  Max prompts per batch: {max_prompts_per_batch}")
+        logger.info("")
     logger.info("Reward Weights:")
     logger.info(f"  Semantic: {config.w_semantic}")
     logger.info(f"  Metacognitive: {config.w_metacognitive}")
@@ -117,38 +236,89 @@ def run_grpo_training(
         model.model.parameters(),
         lr=config.learning_rate
     )
+
+    # Initialize frozen reference policy for KL term (strict GRPO baseline)
+    try:
+        ref_model = deepcopy(model.model)
+        ref_model.eval()
+        ref_model.to(model.model.device)
+        for param in ref_model.parameters():
+            param.requires_grad = False
+        logger.info("Initialized frozen reference policy for KL computation")
+    except Exception as e:
+        raise RuntimeError(
+            "Failed to initialize frozen reference policy. "
+            "A valid reference policy is required for GRPO KL computation."
+        ) from e
     
     # Training loop
     logger.info("Starting GRPO training loop...")
     logger.info("")
-    
+
     training_stats = {
         'iterations': [],
         'rewards': [],
         'policy_losses': [],
         'value_losses': [],
         'kl_divergences': [],
+        'semantic_rewards': [],
+        'metacognitive_rewards': [],
+        'empathy_rewards': [],
+        'proactivity_rewards': [],
+        'safety_rewards': [],
     }
+
+    # Resume support: load previous stats if available
+    latest_iteration = _find_latest_grpo_iteration(output_dir)
+    stats_path = output_dir / 'training_stats.json'
+    if stats_path.exists():
+        try:
+            with open(stats_path, 'r') as f:
+                previous_stats = json.load(f)
+            if isinstance(previous_stats, dict) and previous_stats.get('iterations'):
+                for key in training_stats.keys():
+                    if key in previous_stats and isinstance(previous_stats[key], list):
+                        training_stats[key] = previous_stats[key]
+                latest_iteration = max(latest_iteration, int(training_stats['iterations'][-1]))
+                logger.info(f"Resuming GRPO stats from iteration {latest_iteration}")
+        except Exception as e:
+            logger.warning(f"Could not load existing GRPO stats, starting fresh stats: {e}")
+
+    start_iteration = latest_iteration
+    if start_iteration >= config.num_iterations:
+        logger.info(
+            f"Requested num_iterations={config.num_iterations} already reached "
+            f"(latest={start_iteration}). Nothing to run."
+        )
+        _save_grpo_artifacts(output_dir, training_stats)
+        return
+
+    # Use a persistent dataloader iterator and only recreate on exhaustion
+    data_iter = iter(train_dataloader)
     
-    for iteration in range(config.num_iterations):
+    for iteration in range(start_iteration, config.num_iterations):
         logger.info(f"Iteration {iteration + 1}/{config.num_iterations}")
         
         # Sample batch of prompts
         try:
-            batch = next(iter(train_dataloader))
+            batch = next(data_iter)
             # With batch_size=1, batch['prompt'] should be a single string
             prompts = [batch['prompt']] if isinstance(batch['prompt'], str) else batch['prompt']
         except StopIteration:
             logger.warning("DataLoader exhausted, restarting...")
-            train_dataloader = iter(train_dataloader)
-            batch = next(train_dataloader)
+            data_iter = iter(train_dataloader)
+            batch = next(data_iter)
             prompts = [batch['prompt']] if isinstance(batch['prompt'], str) else batch['prompt']
+
+        if max_prompts_per_batch > 0 and len(prompts) > max_prompts_per_batch:
+            prompts = prompts[:max_prompts_per_batch]
         
         # Generate K responses per prompt
         logger.info(f"  Generating {config.num_generations_per_prompt} responses per prompt...")
         
         all_responses = []
         all_rewards = []
+        all_component_rewards = []
         
         with torch.no_grad():
             for prompt in tqdm(prompts, desc="Prompts", leave=False):
@@ -168,12 +338,20 @@ def run_grpo_training(
                     prompt_responses.append(response)
                     
                     # Compute reward
-                    reward = reward_engine.compute_total(
+                    components = reward_engine.compute_all(
                         prompt=prompt,
                         response=response
                     )
+                    reward = (
+                        reward_engine.w_semantic * components['semantic'] +
+                        reward_engine.w_metacognitive * components['metacognitive'] +
+                        reward_engine.w_empathy * components['empathy'] +
+                        reward_engine.w_proactivity * components['proactivity'] +
+                        reward_engine.w_safety * components['safety']
+                    )
                     
                     prompt_rewards.append(reward)
+                    all_component_rewards.append(components)
                 
                 all_responses.append(prompt_responses)
                 all_rewards.append(prompt_rewards)
@@ -229,10 +407,17 @@ def run_grpo_training(
                 log_probs_dist = torch.nn.functional.log_softmax(shift_logits, dim=-1)
                 log_probs = torch.gather(log_probs_dist, 2, shift_labels.unsqueeze(-1)).squeeze(-1)
                 
-                # Calculate reference log probs (treating current iteration as reference before update step for simplicity, 
-                # a strict GRPO requires freezing an independent ref model)
+                # Calculate reference log probs from frozen reference policy
                 with torch.no_grad():
-                    ref_log_probs = log_probs.detach()
+                    ref_outputs = ref_model(**inputs)
+                    ref_logits = ref_outputs.logits
+                    ref_shift_logits = ref_logits[..., :-1, :].contiguous()
+                    ref_log_probs_dist = torch.nn.functional.log_softmax(ref_shift_logits, dim=-1)
+                    ref_log_probs = torch.gather(
+                        ref_log_probs_dist,
+                        2,
+                        shift_labels.unsqueeze(-1)
+                    ).squeeze(-1)
                 
                 # Only train on the response tokens (mask out prompt log probs)
                 if log_probs.size(1) > prompt_len:
@@ -269,17 +454,49 @@ def run_grpo_training(
         avg_reward = rewards_tensor.mean().item()
         max_reward = rewards_tensor.max().item()
         min_reward = rewards_tensor.min().item()
+
+        if all_component_rewards:
+            avg_semantic = float(np.mean([x['semantic'] for x in all_component_rewards]))
+            avg_metacognitive = float(np.mean([x['metacognitive'] for x in all_component_rewards]))
+            avg_empathy = float(np.mean([x['empathy'] for x in all_component_rewards]))
+            avg_proactivity = float(np.mean([x['proactivity'] for x in all_component_rewards]))
+            avg_safety = float(np.mean([x['safety'] for x in all_component_rewards]))
+        else:
+            avg_semantic = avg_metacognitive = avg_empathy = avg_proactivity = avg_safety = 0.0
         
         training_stats['iterations'].append(iteration + 1)
         training_stats['rewards'].append(avg_reward)
         training_stats['policy_losses'].append(policy_loss.item())
         training_stats['value_losses'].append(value_loss.item())
         training_stats['kl_divergences'].append(kl_div.item())
+        training_stats['semantic_rewards'].append(avg_semantic)
+        training_stats['metacognitive_rewards'].append(avg_metacognitive)
+        training_stats['empathy_rewards'].append(avg_empathy)
+        training_stats['proactivity_rewards'].append(avg_proactivity)
+        training_stats['safety_rewards'].append(avg_safety)
         
         logger.info(f"  Avg Reward: {avg_reward:.4f} (min: {min_reward:.4f}, max: {max_reward:.4f})")
-        logger.info(f"  Policy Loss: {policy_loss.item():.4f}")
-        logger.info(f"  KL Divergence: {kl_div.item():.4f}")
+        logger.info(
+            f"  Policy Loss: {policy_loss.item():.8f} "
+            f"({policy_loss.item():.3e})"
+        )
+        logger.info(
+            f"  KL Divergence: {kl_div.item():.8f} "
+            f"({kl_div.item():.3e})"
+        )
+        logger.info(
+            "  Reward Components: "
+            f"sem={avg_semantic:.4f}, "
+            f"meta={avg_metacognitive:.4f}, "
+            f"emp={avg_empathy:.4f}, "
+            f"pro={avg_proactivity:.4f}, "
+            f"safe={avg_safety:.4f}"
+        )
         logger.info("")
+
+        # Save running stats periodically for recoverability and live plotting
+        if (iteration + 1) % max(config.eval_every_n_iterations, 10) == 0:
+            _save_grpo_artifacts(output_dir, training_stats)
         
         # Save checkpoint periodically
         if (iteration + 1) % config.save_steps == 0:
@@ -311,9 +528,8 @@ def run_grpo_training(
     model.model.save_pretrained(str(final_path))
     model.tokenizer.save_pretrained(str(final_path))
     
-    # Save training statistics
-    with open(output_dir / 'training_stats.json', 'w') as f:
-        json.dump(training_stats, f, indent=2)
+    # Save training statistics/artifacts
+    _save_grpo_artifacts(output_dir, training_stats)
     
     logger.info("")
     logger.info("="*80)

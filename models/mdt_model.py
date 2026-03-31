@@ -168,6 +168,52 @@ class MedicalDigitalTwinModel:
         generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=False)
         return generated_text
     
+    def generate_stream(
+        self,
+        prompt: str,
+        max_length: Optional[int] = None,
+        **kwargs
+    ):
+        """Generate text from prompt as a stream."""
+        from transformers import TextIteratorStreamer
+        from threading import Thread
+        
+        max_length = max_length or self.config.max_length
+        
+        inputs = self.tokenizer(
+            prompt,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=max_length
+        ).to(self.device)
+        
+        streamer = TextIteratorStreamer(
+            self.tokenizer, 
+            skip_prompt=True,
+            skip_special_tokens=False
+        )
+        
+        generation_kwargs = dict(
+            **inputs,
+            streamer=streamer,
+            max_length=max_length,
+            temperature=kwargs.get('temperature', self.config.temperature),
+            top_p=kwargs.get('top_p', self.config.top_p),
+            top_k=kwargs.get('top_k', self.config.top_k),
+            do_sample=True,
+            pad_token_id=self.tokenizer.pad_token_id,
+            eos_token_id=self.tokenizer.eos_token_id
+        )
+        
+        thread = Thread(target=self.model.generate, kwargs=generation_kwargs)
+        thread.start()
+        
+        generated_text = ""
+        for new_text in streamer:
+            generated_text += new_text
+            yield generated_text
+    
     def save_model(self, output_dir: str):
         """Save model and tokenizer."""
         output_dir = Path(output_dir)
@@ -188,6 +234,10 @@ class MedicalDigitalTwinModel:
         logger.info(f"Loading checkpoint from {checkpoint_path}")
         
         if PEFT_AVAILABLE:
-            self.model = PeftModel.from_pretrained(self.model, checkpoint_path)
+            if isinstance(self.model, PeftModel):
+                # Load adapter weights into existing PEFT model
+                self.model.load_adapter(str(checkpoint_path), "default")
+            else:
+                self.model = PeftModel.from_pretrained(self.model, checkpoint_path)
         
         logger.info("Checkpoint loaded")
