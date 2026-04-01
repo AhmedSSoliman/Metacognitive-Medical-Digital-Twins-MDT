@@ -8,8 +8,8 @@
 > A self-correcting, empathetic, and biologically grounded clinical AI that bridges the Socio-Technical Gap through **Delta-Embedding metacognitive rewards** and **multi-objective GRPO alignment**.
 
 **Author:** Ahmed Soliman  
-**Institution:** University of Florida, Health Outcomes & Biomedical Informatics (HOBI)  
-**Paper:** [arXiv:2501.XXXXX](https://arxiv.org/) (Submitted to NeurIPS 2025)
+**Institution:** University of Florida, InHealth Outcomes & Biomedical Informatics (HOBI)  
+**Paper:** [arXiv:2501.XXXXX](https://arxiv.org/) (Submitted to NeurIPS 2026)
 
 ---
 
@@ -22,6 +22,7 @@
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Training Pipeline](#training-pipeline)
+- [Soft CoT Alignment (Provenance + Weighting)](#soft-cot-alignment-provenance--weighting)
 - [Evaluation](#evaluation)
 - [Results](#results)
 - [Project Structure](#project-structure)
@@ -286,6 +287,30 @@ The multi-objective reward system is a core innovation that enables simultaneous
 - Single-command evaluation
 - Web interface for clinical testing
 - HiPerGator SLURM integration
+
+---
+
+## 🧠 Soft CoT Alignment (Provenance + Weighting)
+
+To align mixed datasets (Medical-O1 with strong CoT and MIMIC-derived samples with weaker/noisy reasoning), the training pipeline now uses a **soft mandatory** chain-of-thought strategy:
+
+- Preserve gold reasoning from Medical-O1.
+- Generate/normalize synthetic reasoning for non-gold samples.
+- Attach provenance fields (`think_source`, `think_confidence`, `think_quality_score`).
+- Apply per-sample training weights (`think_weight`) instead of blind hard-mandatory CoT.
+
+Default weighting profile:
+
+- `gold`: `1.0`
+- `synthetic (quality pass)`: `0.45`
+- `synthetic (low quality)`: `0.20`
+
+This improves consistency while reducing over-trust in synthetic rationale text.
+
+Technical methodology (with full figure):
+
+- [`docs/SOFT_COT_ALIGNMENT_METHODOLOGY.md`](docs/SOFT_COT_ALIGNMENT_METHODOLOGY.md)
+- Figure: `docs/assets/soft_cot_alignment_methodology.png`
 
 ---
 
