@@ -191,6 +191,10 @@ graph TD
 
 #### 3. Training Methodology
 
+![Training lifecycle](docs/assets/readme_training_lifecycle.png)
+
+*Figure: End-to-end training lifecycle from SFT capability learning to GRPO behavioral alignment.*
+
 **Phase 1: Supervised Fine-Tuning (SFT)**
 - Dataset: MIMIC-IV ICU trajectories + Medical-O1 reasoning chains
 - Objective: Establish triple-stream cognitive architecture
@@ -249,6 +253,10 @@ The multi-objective reward system is a core innovation that enables simultaneous
 - **Reward Shaping**: KL-constrained updates prevent reward hacking
 - **Implementation**: `rewards/composite_engine.py`
 
+![GRPO reward weights](docs/assets/readme_grpo_reward_weights.png)
+
+*Figure: Relative contribution of each GRPO reward component in the default configuration.*
+
 **Key Design Principles**:
 1. **Complementarity over Competition**: Metacognitive rewards enhance rather than trade off against accuracy
 2. **Verifiability**: Each reward component has independent validation metrics
@@ -291,6 +299,10 @@ The multi-objective reward system is a core innovation that enables simultaneous
 ---
 
 ## 🧠 Soft CoT Alignment (Provenance + Weighting)
+
+![Soft CoT flow](docs/assets/readme_soft_cot_flow.png)
+
+*Figure: Soft mandatory CoT decision flow with provenance tracking, quality filtering, and weighted supervision.*
 
 To align mixed datasets (Medical-O1 with strong CoT and MIMIC-derived samples with weaker/noisy reasoning), the training pipeline now uses a **soft mandatory** chain-of-thought strategy:
 
