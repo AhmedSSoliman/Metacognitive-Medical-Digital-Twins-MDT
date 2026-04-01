@@ -120,6 +120,7 @@ from rewards.composite_engine import CompositeRewardEngine
 from data.mimic_processor import MIMICProcessor
 from data.medical_o1_processor import MedicalO1Processor
 from data.dataset import CognitiveStreamDataset
+from data.think_alignment import apply_soft_think_alignment
 
 from models.mdt_model import MedicalDigitalTwinModel
 
@@ -248,6 +249,7 @@ mimic_data = mimic_processor.process_all_patients(
     max_patients=MAX_PATIENTS,
     save_path="./outputs/mimic_processed.json"
 )
+mimic_data = [{**item, 'source': 'mimic'} for item in mimic_data]
 
 print(f"✓ Processed {len(mimic_data)} MIMIC examples")
 print(f"  Saved to: ./outputs/mimic_processed.json")
@@ -268,6 +270,7 @@ try:
             o1_dataset,
             max_examples=MAX_O1_EXAMPLES
         )
+        o1_data = [{**item, 'source': 'medical_o1'} for item in o1_data]
         print(f"✓ Loaded {len(o1_data)} Medical-O1 examples")
     else:
         print("⚠️ Medical-O1 dataset not available, using MIMIC only")
@@ -282,6 +285,17 @@ except Exception as e:
 
 # Combine datasets
 all_training_data = mimic_data + o1_data
+
+if data_config.soft_think_enabled:
+    all_training_data, alignment_summary = apply_soft_think_alignment(
+        all_training_data,
+        config=data_config
+    )
+    print("\n✓ Applied soft-mandatory CoT alignment")
+    print(f"  Gold think samples: {alignment_summary['gold_examples']}")
+    print(f"  Synthetic think samples: {alignment_summary['synthetic_examples']}")
+    print(f"  Synthetic quality pass rate: {alignment_summary['quality_pass_rate']:.2%}")
+    print(f"  Average think weight: {alignment_summary['avg_think_weight']:.3f}")
 
 print(f"\n✓ Total training examples: {len(all_training_data)}")
 print(f"  MIMIC-IV: {len(mimic_data)}")

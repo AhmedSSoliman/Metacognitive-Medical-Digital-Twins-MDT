@@ -147,6 +147,15 @@ class DataConfig:
     filter_incomplete_reasoning: bool = True  # Remove examples without full CoT
     max_o1_reasoning_length: int = 1500  # Maximum tokens for reasoning chains
 
+    # Soft-mandatory CoT alignment (provenance + weighting)
+    soft_think_enabled: bool = True
+    think_teacher_model: str = "Qwen/Qwen3.5-4B"
+    think_quality_min_chars: int = 80
+    think_quality_min_words: int = 14
+    think_weight_gold: float = 1.0
+    think_weight_synth_high: float = 0.45
+    think_weight_synth_low: float = 0.20
+
 
 @dataclass
 class SFTConfig:

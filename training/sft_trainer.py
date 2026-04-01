@@ -28,6 +28,32 @@ import inspect
 logger = logging.getLogger(__name__)
 
 
+def _compute_weighted_causal_lm_loss(logits, labels, sample_weights=None):
+    """Compute token-masked causal LM loss with optional per-sample weighting."""
+    shift_logits = logits[..., :-1, :].contiguous()
+    shift_labels = labels[..., 1:].contiguous()
+
+    vocab_size = shift_logits.size(-1)
+    per_token_loss = torch.nn.functional.cross_entropy(
+        shift_logits.view(-1, vocab_size),
+        shift_labels.view(-1),
+        ignore_index=-100,
+        reduction='none'
+    ).view(shift_labels.size())
+
+    token_mask = (shift_labels != -100).float()
+    per_example_loss = (per_token_loss * token_mask).sum(dim=1) / token_mask.sum(dim=1).clamp_min(1.0)
+
+    if sample_weights is None:
+        return per_example_loss.mean()
+
+    weights = sample_weights.to(per_example_loss.device).float().clamp_min(0.0)
+    if torch.all(weights == 0):
+        return per_example_loss.mean()
+
+    return (per_example_loss * weights).sum() / weights.sum().clamp_min(1e-8)
+
+
 def run_sft_training(model, train_dataset, eval_dataset, config):
     """
     Run supervised fine-tuning (Phase 1).
@@ -153,8 +179,21 @@ def run_sft_training(model, train_dataset, eval_dataset, config):
         # Setup training arguments
         training_args = TrainingArguments(**filtered_kwargs)
         
+        class WeightedSFTTrainer(Trainer):
+            """Trainer that applies per-sample `think_weight` when available."""
+
+            def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+                labels = inputs.get("labels")
+                think_weight = inputs.pop("think_weight", None)
+                outputs = model(
+                    input_ids=inputs["input_ids"],
+                    attention_mask=inputs.get("attention_mask"),
+                )
+                loss = _compute_weighted_causal_lm_loss(outputs.logits, labels, think_weight)
+                return (loss, outputs) if return_outputs else loss
+
         # Initialize trainer
-        trainer = Trainer(
+        trainer = WeightedSFTTrainer(
             model=model.model,
             args=training_args,
             train_dataset=train_dataset,
@@ -315,21 +354,24 @@ def _basic_training_loop(model, train_dataset, eval_dataset, config, output_dir)
             input_ids = batch['input_ids'].to(model.device)
             attention_mask = batch['attention_mask'].to(model.device)
             labels = batch['labels'].to(model.device)
+            think_weight = batch.get('think_weight')
+            if think_weight is not None:
+                think_weight = think_weight.to(model.device)
             
             # Forward pass
             outputs = model.model(
                 input_ids=input_ids,
                 attention_mask=attention_mask,
-                labels=labels
             )
-            
-            loss = outputs.loss / config.gradient_accumulation_steps
+
+            raw_loss = _compute_weighted_causal_lm_loss(outputs.logits, labels, think_weight)
+            loss = raw_loss / config.gradient_accumulation_steps
             
             # Backward pass
             loss.backward()
             
             # Track loss
-            batch_loss = loss.item() * config.gradient_accumulation_steps
+            batch_loss = raw_loss.item()
             epoch_loss += batch_loss
             
             # Update progress bar

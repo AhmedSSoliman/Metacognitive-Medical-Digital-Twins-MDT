@@ -327,13 +327,40 @@ def run_grpo_training(
                 
                 for k in range(config.num_generations_per_prompt):
                     # Generate response
-                    response = model.generate(
-                        prompt,
-                        max_length=config.generation_max_length,
-                        temperature=config.generation_temperature,
-                        top_p=config.generation_top_p,
-                        do_sample=True
-                    )
+                    try:
+                        response = model.generate(
+                            prompt,
+                            max_length=config.generation_max_length,
+                            temperature=config.generation_temperature,
+                            top_p=config.generation_top_p,
+                            do_sample=True
+                        )
+                    except Exception as e:
+                        debug_info = {
+                            "iteration": iteration + 1,
+                            "prompt_index": p_idx,
+                            "generation_index": k,
+                            "generation_max_length": config.generation_max_length,
+                            "temperature": config.generation_temperature,
+                            "top_p": config.generation_top_p,
+                            "prompt_preview": str(prompt)[:240],
+                        }
+
+                        if hasattr(model, "_get_prompt_debug_info"):
+                            try:
+                                debug_info.update(
+                                    model._get_prompt_debug_info(
+                                        str(prompt),
+                                        max(2, int(config.generation_max_length) - 1)
+                                    )
+                                )
+                            except Exception as dbg_exc:
+                                debug_info["prompt_debug_error"] = str(dbg_exc)
+
+                        logger.error("GRPO generation failure context: %s", json.dumps(debug_info, default=str))
+                        raise RuntimeError(
+                            "GRPO generation failed. See prior log line for prompt/tokenizer/model diagnostics."
+                        ) from e
                     
                     prompt_responses.append(response)
                     

@@ -67,11 +67,14 @@ class MedicalDigitalTwinModel:
         
         self.tokenizer.add_special_tokens(special_tokens)
         self.model.resize_token_embeddings(len(self.tokenizer))
+        if hasattr(self.model, "tie_weights"):
+            self.model.tie_weights()
         
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
         self.model.to(self.device)
+        self._ensure_generation_readiness()
         logger.info("Demo model loaded successfully")
     
     def _setup_production_model(self):
@@ -129,12 +132,122 @@ class MedicalDigitalTwinModel:
         
         self.tokenizer.add_special_tokens(special_tokens)
         self.model.resize_token_embeddings(len(self.tokenizer))
+        if hasattr(self.model, "tie_weights"):
+            self.model.tie_weights()
         
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
         
+        self._ensure_generation_readiness()
         logger.info("Production model loaded")
         self.model.print_trainable_parameters()
+
+    def _ensure_generation_readiness(self) -> None:
+        """Validate tokenizer/model consistency to avoid CUDA device-side asserts."""
+        if self.model is None or self.tokenizer is None:
+            raise ValueError("Model and tokenizer must be initialized before generation checks.")
+
+        embedding_rows = int(self.model.get_input_embeddings().num_embeddings)
+        tokenizer_size = int(len(self.tokenizer))
+
+        # Try to align embedding matrix with tokenizer size when possible.
+        if embedding_rows != tokenizer_size:
+            logger.warning(
+                "Tokenizer/model size mismatch detected (tokenizer=%s, embeddings=%s). "
+                "Attempting resize_token_embeddings.",
+                tokenizer_size,
+                embedding_rows,
+            )
+            self.model.resize_token_embeddings(tokenizer_size)
+            embedding_rows = int(self.model.get_input_embeddings().num_embeddings)
+
+        if embedding_rows != tokenizer_size:
+            raise ValueError(
+                "Tokenizer/model vocab mismatch after resize attempt: "
+                f"tokenizer={tokenizer_size}, embeddings={embedding_rows}."
+            )
+
+        # Ensure special token ids are valid.
+        if self.tokenizer.pad_token_id is None:
+            if self.tokenizer.eos_token_id is not None:
+                self.tokenizer.pad_token = self.tokenizer.eos_token
+            else:
+                raise ValueError("Tokenizer is missing both pad_token_id and eos_token_id.")
+
+        for name, token_id in {
+            "pad_token_id": self.tokenizer.pad_token_id,
+            "eos_token_id": self.tokenizer.eos_token_id,
+            "bos_token_id": self.tokenizer.bos_token_id,
+        }.items():
+            if token_id is None:
+                continue
+            if int(token_id) < 0 or int(token_id) >= embedding_rows:
+                raise ValueError(
+                    f"Invalid {name}={token_id} for embedding rows={embedding_rows}."
+                )
+
+        output_embeddings = self.model.get_output_embeddings()
+        if output_embeddings is not None:
+            if hasattr(output_embeddings, "out_features"):
+                output_rows = int(output_embeddings.out_features)
+            elif hasattr(output_embeddings, "weight"):
+                output_rows = int(output_embeddings.weight.shape[0])
+            else:
+                output_rows = None
+
+            if output_rows is not None and output_rows != embedding_rows:
+                if hasattr(self.model, "tie_weights"):
+                    logger.warning(
+                        "Input/output embedding mismatch detected (input_rows=%s, output_rows=%s). "
+                        "Attempting tie_weights().",
+                        embedding_rows,
+                        output_rows,
+                    )
+                    self.model.tie_weights()
+                    output_embeddings = self.model.get_output_embeddings()
+                    if output_embeddings is not None and hasattr(output_embeddings, "weight"):
+                        output_rows = int(output_embeddings.weight.shape[0])
+                    elif output_embeddings is not None and hasattr(output_embeddings, "out_features"):
+                        output_rows = int(output_embeddings.out_features)
+
+            if output_rows is not None and output_rows != embedding_rows:
+                raise ValueError(
+                    "Input/output embedding size mismatch detected: "
+                    f"input_rows={embedding_rows}, output_rows={output_rows}."
+                )
+
+    def _get_prompt_debug_info(self, prompt: str, max_prompt_tokens: int) -> dict:
+        """Build prompt tokenization diagnostics for crash triage."""
+        tokenized = self.tokenizer(
+            prompt,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+            max_length=max_prompt_tokens,
+        )
+        input_ids = tokenized["input_ids"]
+
+        embedding_rows = int(self.model.get_input_embeddings().num_embeddings)
+        output_embeddings = self.model.get_output_embeddings()
+        if output_embeddings is not None and hasattr(output_embeddings, "weight"):
+            output_rows = int(output_embeddings.weight.shape[0])
+        elif output_embeddings is not None and hasattr(output_embeddings, "out_features"):
+            output_rows = int(output_embeddings.out_features)
+        else:
+            output_rows = None
+
+        return {
+            "prompt_chars": len(prompt),
+            "prompt_token_count": int(input_ids.shape[-1]),
+            "prompt_token_min": int(input_ids.min().item()),
+            "prompt_token_max": int(input_ids.max().item()),
+            "tokenizer_size": int(len(self.tokenizer)),
+            "embedding_rows": embedding_rows,
+            "output_rows": output_rows,
+            "pad_token_id": self.tokenizer.pad_token_id,
+            "eos_token_id": self.tokenizer.eos_token_id,
+            "bos_token_id": self.tokenizer.bos_token_id,
+        }
     
     def generate(
         self,
@@ -143,20 +256,70 @@ class MedicalDigitalTwinModel:
         **kwargs
     ) -> str:
         """Generate text from prompt."""
-        max_length = max_length or self.config.max_length
-        
+        self._ensure_generation_readiness()
+        requested_total_length = int(max_length or self.config.max_length)
+
+        # Determine an effective context window from model/tokenizer constraints.
+        model_max_positions = getattr(self.model.config, "max_position_embeddings", None)
+        tokenizer_max_length = getattr(self.tokenizer, "model_max_length", None)
+
+        context_candidates = [requested_total_length]
+        if isinstance(model_max_positions, int) and model_max_positions > 0:
+            context_candidates.append(model_max_positions)
+        if isinstance(tokenizer_max_length, int) and 0 < tokenizer_max_length < 1_000_000:
+            context_candidates.append(tokenizer_max_length)
+
+        effective_context = max(2, min(context_candidates))
+
+        # Keep at least one token budget for generation.
+        max_prompt_tokens = max(1, effective_context - 1)
+
         inputs = self.tokenizer(
             prompt,
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=max_length
+            max_length=max_prompt_tokens
         ).to(self.device)
+
+        input_ids = inputs["input_ids"]
+        prompt_len = int(input_ids.shape[-1])
+        available_new_tokens = max(1, effective_context - prompt_len)
+
+        # Preserve prior API semantics where max_length was "total sequence length".
+        requested_new_tokens = max(1, requested_total_length - prompt_len)
+        max_new_tokens = min(requested_new_tokens, available_new_tokens)
+
+        # Defensive checks: fail fast on invalid token ids before CUDA kernels run.
+        embedding_rows = int(self.model.get_input_embeddings().num_embeddings)
+        token_id_min = int(input_ids.min().item())
+        token_id_max = int(input_ids.max().item())
+        if token_id_min < 0 or token_id_max >= embedding_rows:
+            raise ValueError(
+                "Tokenizer/model vocab mismatch detected before generation: "
+                f"token id range=({token_id_min}, {token_id_max}), "
+                f"embedding rows={embedding_rows}."
+            )
+
+        output_embeddings = self.model.get_output_embeddings()
+        if output_embeddings is not None:
+            if hasattr(output_embeddings, "weight"):
+                output_rows = int(output_embeddings.weight.shape[0])
+            elif hasattr(output_embeddings, "out_features"):
+                output_rows = int(output_embeddings.out_features)
+            else:
+                output_rows = embedding_rows
+
+            if token_id_max >= output_rows:
+                raise ValueError(
+                    "Tokenizer/model output vocab mismatch detected before generation: "
+                    f"token id max={token_id_max}, output rows={output_rows}."
+                )
         
         with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
-                max_length=max_length,
+                max_new_tokens=max_new_tokens,
                 temperature=kwargs.get('temperature', self.config.temperature),
                 top_p=kwargs.get('top_p', self.config.top_p),
                 top_k=kwargs.get('top_k', self.config.top_k),
@@ -175,18 +338,47 @@ class MedicalDigitalTwinModel:
         **kwargs
     ):
         """Generate text from prompt as a stream."""
+        self._ensure_generation_readiness()
         from transformers import TextIteratorStreamer
         from threading import Thread
         
-        max_length = max_length or self.config.max_length
-        
+        requested_total_length = int(max_length or self.config.max_length)
+
+        model_max_positions = getattr(self.model.config, "max_position_embeddings", None)
+        tokenizer_max_length = getattr(self.tokenizer, "model_max_length", None)
+
+        context_candidates = [requested_total_length]
+        if isinstance(model_max_positions, int) and model_max_positions > 0:
+            context_candidates.append(model_max_positions)
+        if isinstance(tokenizer_max_length, int) and 0 < tokenizer_max_length < 1_000_000:
+            context_candidates.append(tokenizer_max_length)
+
+        effective_context = max(2, min(context_candidates))
+        max_prompt_tokens = max(1, effective_context - 1)
+
         inputs = self.tokenizer(
             prompt,
             return_tensors="pt",
             padding=True,
             truncation=True,
-            max_length=max_length
+            max_length=max_prompt_tokens
         ).to(self.device)
+
+        input_ids = inputs["input_ids"]
+        prompt_len = int(input_ids.shape[-1])
+        available_new_tokens = max(1, effective_context - prompt_len)
+        requested_new_tokens = max(1, requested_total_length - prompt_len)
+        max_new_tokens = min(requested_new_tokens, available_new_tokens)
+
+        embedding_rows = int(self.model.get_input_embeddings().num_embeddings)
+        token_id_min = int(input_ids.min().item())
+        token_id_max = int(input_ids.max().item())
+        if token_id_min < 0 or token_id_max >= embedding_rows:
+            raise ValueError(
+                "Tokenizer/model vocab mismatch detected before streaming generation: "
+                f"token id range=({token_id_min}, {token_id_max}), "
+                f"embedding rows={embedding_rows}."
+            )
         
         streamer = TextIteratorStreamer(
             self.tokenizer, 
@@ -197,7 +389,7 @@ class MedicalDigitalTwinModel:
         generation_kwargs = dict(
             **inputs,
             streamer=streamer,
-            max_length=max_length,
+            max_new_tokens=max_new_tokens,
             temperature=kwargs.get('temperature', self.config.temperature),
             top_p=kwargs.get('top_p', self.config.top_p),
             top_k=kwargs.get('top_k', self.config.top_k),
@@ -240,4 +432,6 @@ class MedicalDigitalTwinModel:
             else:
                 self.model = PeftModel.from_pretrained(self.model, checkpoint_path)
         
+        # Ensure tokenizer/model remain aligned after loading checkpoint artifacts.
+        self._ensure_generation_readiness()
         logger.info("Checkpoint loaded")

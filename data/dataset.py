@@ -64,14 +64,22 @@ class CognitiveStreamDataset(Dataset):
             'input_ids': input_ids,
             'attention_mask': attention_mask,
             'labels': labels,
-            'prompt': prompt  # Include raw prompt for GRPO training
+            'prompt': prompt,  # Include raw prompt for GRPO training
+            'think_weight': torch.tensor(float(example.get('think_weight', 1.0)), dtype=torch.float32)
         }
     
     def _construct_prompt(self, example: Dict) -> str:
         """Construct prompt with cognitive streams."""
         prompt = f"Clinical Case:\n{example.get('case_description', '')}\n\n"
-        
-        prompt += f"<think>\n{example.get('reasoning', '')}\n</think>\n\n"
+
+        reasoning_text = (
+            example.get('reasoning')
+            or example.get('think')
+            or example.get('think_synth')
+            or ''
+        )
+
+        prompt += f"<think>\n{reasoning_text}\n</think>\n\n"
         prompt += f"<patient_state>\n{example.get('patient_state', '')}\n</patient_state>\n\n"
         prompt += f"<user_belief>\n{example.get('user_belief', '')}\n</user_belief>\n\n"
         

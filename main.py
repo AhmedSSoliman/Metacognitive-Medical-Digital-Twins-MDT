@@ -36,6 +36,7 @@ from rewards.composite_engine import CompositeRewardEngine
 from data.mimic_processor import MIMICProcessor
 from data.medical_o1_processor import MedicalO1Processor
 from data.dataset import CognitiveStreamDataset
+from data.think_alignment import apply_soft_think_alignment
 
 # Import model
 from models.mdt_model import MedicalDigitalTwinModel
@@ -428,6 +429,7 @@ def handle_train_sft(args):
         max_patients=args.max_patients,
         save_path=str(save_path) if save_path else None
     )
+    mimic_data = [{**item, 'source': 'mimic'} for item in mimic_data]
     print(f"✓ Processed {len(mimic_data)} MIMIC examples")
     
     # Load Medical-O1 data
@@ -443,6 +445,7 @@ def handle_train_sft(args):
                 o1_dataset,
                 max_examples=args.max_o1_examples
             )
+            o1_data = [{**item, 'source': 'medical_o1'} for item in o1_data]
             print(f"✓ Loaded {len(o1_data)} Medical-O1 examples")
         else:
             print("⚠️  Medical-O1 dataset not available, using MIMIC only")
@@ -459,6 +462,18 @@ def handle_train_sft(args):
 
     # Combine all datasets
     all_training_data = mimic_data + o1_data
+
+    if data_config.soft_think_enabled:
+        all_training_data, alignment_summary = apply_soft_think_alignment(
+            all_training_data,
+            config=data_config
+        )
+        print("✓ Applied soft-mandatory CoT alignment")
+        print(f"  Gold think samples: {alignment_summary['gold_examples']}")
+        print(f"  Synthetic think samples: {alignment_summary['synthetic_examples']}")
+        print(f"  Synthetic quality pass rate: {alignment_summary['quality_pass_rate']:.2%}")
+        print(f"  Average think weight: {alignment_summary['avg_think_weight']:.3f}")
+        print(f"  Teacher model tag: {alignment_summary['teacher_model']}")
     
     print(f"\n✓ Total training examples: {len(all_training_data)}")
     print(f"  MIMIC-IV: {len(mimic_data)}")
@@ -683,6 +698,83 @@ def handle_train_grpo(args):
     clean_memory()
 
 
+def handle_sanity_sft(args):
+    """Run a tiny in-memory SFT sanity check for soft-CoT weighting path."""
+    print("\n" + "="*80)
+    print("SFT SANITY MODE - SOFT COT WEIGHTING")
+    print("="*80 + "\n")
+
+    output_root = Path(args.output_dir) if args.output_dir else Path("./outputs/sanity_softcot_cli")
+    sft_output = output_root / "sft"
+    sft_logs = output_root / "logs" / "sft"
+
+    examples = [
+        {
+            'source': 'mimic',
+            'case_description': 'ICU patient with fever and hypotension',
+            'prompt': 'Assess ICU patient with fever and hypotension',
+            'patient_state': 'HR 122, SBP 86, Temp 101.2F',
+            'user_belief': 'Family member anxious',
+            'response': 'We are treating probable sepsis and monitoring closely.'
+        },
+        {
+            'source': 'mimic',
+            'case_description': 'ICU patient with dyspnea and low oxygen',
+            'prompt': 'Assess respiratory decline',
+            'patient_state': 'SpO2 88%, RR 30',
+            'user_belief': 'Nurse handoff',
+            'response': 'Escalate oxygen support and evaluate cause immediately.'
+        },
+        {
+            'source': 'medical_o1',
+            'prompt': 'How to evaluate sepsis progression?',
+            'think': 'Evaluate infection source, lactate trend, hemodynamics, and organ dysfunction markers.',
+            'patient_state': 'Lactate rising to 3.5',
+            'user_belief': 'Medical trainee',
+            'response': 'Prioritize source control, fluids, and serial reassessment.'
+        },
+        {
+            'source': 'medical_o1',
+            'prompt': 'Best first steps in shock management?',
+            'think': 'Assess airway breathing circulation, perfusion markers, and likely etiology before targeted therapy.',
+            'patient_state': 'MAP 58, tachycardia',
+            'user_belief': 'Resident physician',
+            'response': 'Start stabilization bundle and etiology-directed treatment quickly.'
+        }
+    ]
+
+    data_cfg = DataConfig()
+    aligned, summary = apply_soft_think_alignment(examples, data_cfg)
+    print(f"ALIGN_SUMMARY {summary}")
+
+    model_cfg = ModelConfig()
+    model = MedicalDigitalTwinModel(model_cfg, use_demo_model=True)
+
+    train_dataset = CognitiveStreamDataset(aligned[:3], model.tokenizer, max_length=min(256, model_cfg.max_length))
+    eval_dataset = CognitiveStreamDataset(aligned[3:], model.tokenizer, max_length=min(256, model_cfg.max_length))
+
+    sft_cfg = SFTConfig()
+    sft_cfg.num_epochs = 1
+    sft_cfg.batch_size = 1
+    sft_cfg.gradient_accumulation_steps = 1
+    sft_cfg.logging_steps = 1
+    sft_cfg.save_steps = 1000
+    sft_cfg.eval_steps = 1000
+    sft_cfg.dataloader_num_workers = 0
+    sft_cfg.fp16 = False
+    sft_cfg.bf16 = False
+    sft_cfg.output_dir = str(sft_output)
+    sft_cfg.logging_dir = str(sft_logs)
+
+    run_sft_training(model=model, train_dataset=train_dataset, eval_dataset=eval_dataset, config=sft_cfg)
+
+    print("\n✓ SFT sanity run complete")
+    print(f"  Output dir: {sft_output}")
+    print("  Marker: SFT_SANITY_DONE")
+
+    clean_memory()
+
+
 def handle_evaluate(args):
     """Handle evaluation."""
     print("\n" + "="*80)
@@ -809,6 +901,7 @@ Recommended Workflow:
 Quick Commands:
   %(prog)s                              # Run demo and tests (no training)
   %(prog)s --test-only                  # Tests only
+    %(prog)s --sanity-sft                 # Tiny soft-CoT weighted SFT smoke test
   %(prog)s --launch-ui                  # Web interface (demo model)
 
 For more information, visit: https://github.com/ahmedsoliman/medical-digital-twin
@@ -841,6 +934,11 @@ For more information, visit: https://github.com/ahmedsoliman/medical-digital-twi
         "--train-sft",
         action="store_true",
         help="Run supervised fine-tuning (Phase 1)"
+    )
+    parser.add_argument(
+        "--sanity-sft",
+        action="store_true",
+        help="Run tiny in-memory SFT sanity check for soft-CoT weighting"
     )
     parser.add_argument(
         "--train-grpo",
@@ -918,6 +1016,9 @@ For more information, visit: https://github.com/ahmedsoliman/medical-digital-twi
         
         elif args.train_sft:
             handle_train_sft(args)
+
+        elif args.sanity_sft:
+            handle_sanity_sft(args)
         
         elif args.train_grpo:
             handle_train_grpo(args)
