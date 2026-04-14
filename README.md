@@ -23,6 +23,8 @@
 - [Quick Start](#quick-start)
 - [Training Pipeline](#training-pipeline)
 - [Soft CoT Alignment (Provenance + Weighting)](#soft-cot-alignment-provenance--weighting)
+- [API Serving](#api-serving)
+- [Testing](#testing)
 - [Evaluation](#evaluation)
 - [Results](#results)
 - [Project Structure](#project-structure)
@@ -330,7 +332,7 @@ Technical methodology (with full figure):
 
 ### Model Specifications
 
-- **Base Model:** MedGemma-4B-IT (Google)
+- **Base Model:** `google/medgemma-1.5-4b-it` (Google)
 - **Fine-tuning:** LoRA (rank=16, α=32) with 4-bit quantization
 - **Context Length:** 2048 tokens
 - **Parameters:** ~4B total, ~25M trainable (LoRA)
@@ -441,6 +443,23 @@ print(f"Reasoning: {streams.think}")
 print(f"Patient State: {streams.patient_state}")
 print(f"Communication Strategy: {streams.user_belief}")
 ```
+
+### 4. API Serving
+
+```bash
+uvicorn api.server:app --host 0.0.0.0 --port 8000
+```
+
+- API documentation: [`docs/API.md`](docs/API.md)
+- API package guide: [`api/README.md`](api/README.md)
+
+### 5. Testing
+
+```bash
+pytest tests -q
+```
+
+- Troubleshooting guide: [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md)
 
 ---
 
@@ -589,7 +608,7 @@ DETAILED RESULTS:
 
 | Model | Accuracy | Self-Correction | Safety | Empathy |
 |-------|----------|----------------|---------|---------|
-| MedGemma-4B (base) | 76.2% | 42.1% | 81.3% | 54.2% |
+| MedGemma 1.5 4B (base) | 76.2% | 42.1% | 81.3% | 54.2% |
 | + Standard CoT | 78.4% | 45.8% | 83.1% | 56.7% |
 | + Constitutional AI | 77.9% | 43.2% | 92.4% | 61.3% |
 | **+ MDT (ours)** | **82.3%** | **76.3%** | **97.7%** | **81.7%** |
@@ -642,15 +661,25 @@ medical-digital-twin/
 │   ├── __init__.py
 │   └── gradio_app.py           # Gradio UI
 │
+├── api/                         # FastAPI serving layer
+│   ├── __init__.py
+│   └── server.py               # /health and /generate endpoints
+│
 ├── utils/                       # Utilities
 │   ├── __init__.py
 │   └── helpers.py              # Memory management, logging
+│
+├── tests/                       # Unit and smoke tests
+│   ├── test_api_health.py
+│   ├── test_cognitive_streams.py
+│   └── test_config_validation.py
 │
 ├── main.py                      # ⭐ Master orchestrator
 ├── requirements.txt             # Python dependencies
 ├── setup.py                     # Package installation
 ├── README.md                    # This file
-└── .gitignore                  # Git ignore patterns
+├── Dockerfile                   # Container serving image
+└── .github/workflows/ci.yml     # CI test workflow
 ```
 
 ---
