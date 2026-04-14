@@ -321,49 +321,50 @@ def run_grpo_training(
         all_component_rewards = []
         
         with torch.no_grad():
-            for prompt in tqdm(prompts, desc="Prompts", leave=False):
+            for p_idx, prompt in enumerate(tqdm(prompts, desc="Prompts", leave=False)):
                 prompt_responses = []
                 prompt_rewards = []
-                
-                for k in range(config.num_generations_per_prompt):
-                    # Generate response
-                    try:
-                        response = model.generate(
-                            prompt,
-                            max_length=config.generation_max_length,
-                            temperature=config.generation_temperature,
-                            top_p=config.generation_top_p,
-                            do_sample=True
-                        )
-                    except Exception as e:
-                        debug_info = {
-                            "iteration": iteration + 1,
-                            "prompt_index": p_idx,
-                            "generation_index": k,
-                            "generation_max_length": config.generation_max_length,
-                            "temperature": config.generation_temperature,
-                            "top_p": config.generation_top_p,
-                            "prompt_preview": str(prompt)[:240],
-                        }
 
-                        if hasattr(model, "_get_prompt_debug_info"):
-                            try:
-                                debug_info.update(
-                                    model._get_prompt_debug_info(
-                                        str(prompt),
-                                        max(2, int(config.generation_max_length) - 1)
-                                    )
+                # Batched K-generation for efficiency (falls back to sequential internally as needed).
+                try:
+                    generated_responses = generate_k_responses_batched(
+                        model=model,
+                        prompt=prompt,
+                        K=config.num_generations_per_prompt,
+                        max_length=config.generation_max_length,
+                        temperature=config.generation_temperature,
+                        top_p=config.generation_top_p,
+                        batch_size=min(4, config.num_generations_per_prompt),
+                    )
+                except Exception as e:
+                    debug_info = {
+                        "iteration": iteration + 1,
+                        "prompt_index": p_idx,
+                        "generation_max_length": config.generation_max_length,
+                        "temperature": config.generation_temperature,
+                        "top_p": config.generation_top_p,
+                        "prompt_preview": str(prompt)[:240],
+                    }
+
+                    if hasattr(model, "_get_prompt_debug_info"):
+                        try:
+                            debug_info.update(
+                                model._get_prompt_debug_info(
+                                    str(prompt),
+                                    max(2, int(config.generation_max_length) - 1)
                                 )
-                            except Exception as dbg_exc:
-                                debug_info["prompt_debug_error"] = str(dbg_exc)
+                            )
+                        except Exception as dbg_exc:
+                            debug_info["prompt_debug_error"] = str(dbg_exc)
 
-                        logger.error("GRPO generation failure context: %s", json.dumps(debug_info, default=str))
-                        raise RuntimeError(
-                            "GRPO generation failed. See prior log line for prompt/tokenizer/model diagnostics."
-                        ) from e
-                    
+                    logger.error("GRPO generation failure context: %s", json.dumps(debug_info, default=str))
+                    raise RuntimeError(
+                        "GRPO generation failed. See prior log line for prompt/tokenizer/model diagnostics."
+                    ) from e
+
+                for response in generated_responses:
                     prompt_responses.append(response)
-                    
+
                     # Compute reward
                     components = reward_engine.compute_all(
                         prompt=prompt,
@@ -402,8 +403,9 @@ def run_grpo_training(
         model.model.train()
         total_policy_loss = 0.0
         total_kl_div = 0.0
-        
+        accumulation_steps = max(1, int(getattr(config, "gradient_accumulation_steps", 1)))
         optimizer.zero_grad()
+        grad_updates = 0
         
         # Process backpropagation per prompt group
         for p_idx, prompt in enumerate(prompts):
@@ -464,11 +466,20 @@ def run_grpo_training(
                         ref_response_log_probs
                     )
                     
-                    p_loss.backward()
+                    (p_loss / accumulation_steps).backward()
+                    grad_updates += 1
                     total_policy_loss += p_loss.item()
                     total_kl_div += kl.item()
+
+                    if grad_updates % accumulation_steps == 0:
+                        torch.nn.utils.clip_grad_norm_(model.model.parameters(), config.max_grad_norm)
+                        optimizer.step()
+                        optimizer.zero_grad()
         
-        optimizer.step()
+        if grad_updates % accumulation_steps != 0:
+            torch.nn.utils.clip_grad_norm_(model.model.parameters(), config.max_grad_norm)
+            optimizer.step()
+            optimizer.zero_grad()
         model.model.eval()
         
         # Average the losses over all generations
@@ -546,6 +557,15 @@ def run_grpo_training(
         if kl_div.item() > config.target_kl * 1.5:
             logger.warning(f"  KL divergence {kl_div.item():.4f} exceeds target {config.target_kl}")
             logger.warning(f"  Consider reducing learning rate")
+
+        # Early stopping based on reward plateau
+        if check_convergence(
+            training_stats,
+            patience=int(getattr(config, "early_stop_patience", 5)),
+            min_delta=float(getattr(config, "early_stop_min_delta", 0.01)),
+        ):
+            logger.info("Early stopping: reward plateau detected.")
+            break
     
     # Save final model
     logger.info("Saving final policy...")
@@ -668,16 +688,17 @@ def compute_kl_divergence(
     return kl
 
 
-def generate_k_responses(
+def generate_k_responses_batched(
     model,
     prompt: str,
     K: int,
     max_length: int = 512,
     temperature: float = 0.8,
-    top_p: float = 0.9
+    top_p: float = 0.9,
+    batch_size: int = 4,
 ) -> List[str]:
     """
-    Generate K responses for a single prompt.
+    Generate K responses for a single prompt with mini-batching.
     
     Args:
         model: MedicalDigitalTwinModel
@@ -696,16 +717,63 @@ def generate_k_responses(
         >>> print(len(responses))
         5
     """
-    responses = []
-    
-    for _ in range(K):
-        response = model.generate(
-            prompt,
+    responses: List[str] = []
+    batch_size = max(1, int(batch_size))
+
+    # Fall back to wrapper generation when tokenizer/model batching unavailable.
+    if not hasattr(model, "tokenizer") or not hasattr(model, "model"):
+        return [
+            model.generate(
+                prompt,
+                max_length=max_length,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=True
+            )
+            for _ in range(K)
+        ]
+
+    for start in range(0, K, batch_size):
+        current_bs = min(batch_size, K - start)
+        prompts = [prompt] * current_bs
+
+        inputs = model.tokenizer(
+            prompts,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
             max_length=max_length,
-            temperature=temperature,
-            top_p=top_p,
-            do_sample=True
-        )
-        responses.append(response)
-    
-    return responses
+        ).to(model.model.device)
+
+        with torch.no_grad():
+            outputs = model.model.generate(
+                **inputs,
+                max_new_tokens=max_length,
+                temperature=temperature,
+                top_p=top_p,
+                do_sample=True,
+                pad_token_id=model.tokenizer.pad_token_id,
+                eos_token_id=model.tokenizer.eos_token_id,
+            )
+
+        decoded = model.tokenizer.batch_decode(outputs, skip_special_tokens=False)
+        responses.extend(decoded)
+
+    return responses[:K]
+
+
+def check_convergence(training_stats: Dict[str, List[float]], patience: int = 5, min_delta: float = 0.01) -> bool:
+    """Detect reward plateau for optional early stopping."""
+    rewards = training_stats.get("rewards", [])
+    if len(rewards) < patience + 1:
+        return False
+
+    recent = rewards[-patience:]
+    changes = [abs(recent[i] - recent[i - 1]) for i in range(1, len(recent))]
+    if not changes:
+        return False
+    avg_change = float(np.mean(changes))
+    if avg_change < min_delta:
+        logger.info("Reward plateau detected (avg_change=%.5f < min_delta=%.5f)", avg_change, min_delta)
+        return True
+    return False

@@ -498,7 +498,7 @@ def handle_train_sft(args):
         model = MedicalDigitalTwinModel(model_config, use_demo_model=True)
     else:
         try:
-            print("Loading production model (MedGemma-4B)...")
+            print("Loading production model (MedGemma-1.5-4B-IT)...")
             model = MedicalDigitalTwinModel(model_config, use_demo_model=False)
             print("✓ Production model loaded successfully")
         except Exception as e:

@@ -1,4 +1,5 @@
 import os
+import subprocess
 #!/usr/bin/env python
 # coding: utf-8
 
@@ -56,12 +57,26 @@ print(f"Python executable: {sys.executable}")
 # In[ ]:
 
 
-# Install required packages
-os.system('pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118')
-os.system('pip install transformers datasets accelerate bitsandbytes')
-os.system('pip install sentence-transformers pandas numpy tqdm')
-os.system('pip install gradio matplotlib seaborn')
-os.system('pip install peft unsloth')
+def check_and_install_dependencies():
+    """Install required dependencies only when missing."""
+    required_packages = {
+        'torch': ['torch', 'torchvision', 'torchaudio', '--index-url', 'https://download.pytorch.org/whl/cu118'],
+        'transformers': ['transformers', 'datasets', 'accelerate', 'bitsandbytes'],
+        'sentence_transformers': ['sentence-transformers', 'pandas', 'numpy', 'tqdm'],
+        'gradio': ['gradio', 'matplotlib', 'seaborn'],
+        'peft': ['peft', 'unsloth'],
+    }
+
+    for import_name, pip_args in required_packages.items():
+        try:
+            __import__(import_name)
+            print(f"✓ {import_name} already installed")
+        except ImportError:
+            print(f"Installing packages for {import_name}...")
+            subprocess.check_call([sys.executable, '-m', 'pip', 'install', *pip_args])
+
+
+check_and_install_dependencies()
 
 
 # In[2]:
@@ -163,7 +178,7 @@ eval_config = EvaluationConfig()
 # Training parameters (MODIFY THESE)
 MAX_PATIENTS = 10  # Start small for testing (10), increase for production (1000)
 MAX_O1_EXAMPLES = 100  # Medical-O1 examples to load
-USE_DEMO_MODEL = True  # True=GPT-2 (fast), False=MedGemma-4B (slow but better)
+USE_DEMO_MODEL = True  # True=GPT-2 (fast), False=MedGemma-1.5-4B-IT (slow but better)
 
 print("Configuration:")
 print(f"  Base model: {model_config.model_name}")
@@ -275,9 +290,12 @@ try:
     else:
         print("⚠️ Medical-O1 dataset not available, using MIMIC only")
         o1_data = []
-except Exception as e:
-    print(f"⚠️ Medical-O1 loading failed: {e}")
+except (OSError, ValueError, KeyError) as e:
+    logger.warning(f"Medical-O1 loading failed: {e}")
     o1_data = []
+except Exception as e:
+    logger.error(f"Unexpected error loading Medical-O1: {e}")
+    raise
 
 
 # In[11]:
@@ -314,7 +332,7 @@ print("="*80 + "\n")
 
 if USE_DEMO_MODEL:
     print("⚠️ Using demo model (GPT-2) for fast testing")
-    print("   For production, set USE_DEMO_MODEL=False to use MedGemma-4B\n")
+    print("   For production, set USE_DEMO_MODEL=False to use MedGemma-1.5-4B-IT\n")
     model = MedicalDigitalTwinModel(model_config, use_demo_model=True)
 else:
     print(f"Loading production model: {model_config.model_name}")
@@ -379,11 +397,39 @@ else:
 
 print("\nStarting SFT training...\n")
 
-sft_result = run_sft_training(
+
+def resume_or_start_training(model, train_dataset, eval_dataset, config):
+    """Resume SFT from latest checkpoint if available, otherwise start fresh."""
+    checkpoint_dir = Path(config.output_dir)
+    checkpoints = sorted(
+        [p for p in checkpoint_dir.glob("checkpoint-*") if p.is_dir()],
+        key=lambda p: int(p.name.split("-")[1]) if "-" in p.name and p.name.split("-")[1].isdigit() else -1,
+    )
+
+    if checkpoints:
+        latest_checkpoint = checkpoints[-1]
+        logger.info(f"Resuming SFT from checkpoint: {latest_checkpoint}")
+        return run_sft_training(
+            model=model,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            config=config,
+            resume_from_checkpoint=str(latest_checkpoint),
+        )
+
+    logger.info("Starting SFT from scratch")
+    return run_sft_training(
+        model=model,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset,
+        config=config,
+    )
+
+sft_result = resume_or_start_training(
     model=model,
     train_dataset=train_dataset,
     eval_dataset=eval_dataset,
-    config=sft_config
+    config=sft_config,
 )
 
 print("\n✓ SFT training complete!")

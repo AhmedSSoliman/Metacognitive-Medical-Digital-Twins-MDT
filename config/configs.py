@@ -16,8 +16,14 @@ Author: Ahmed Soliman
 Institution: University of Florida, Health Outcomes & Biomedical Informatics (HOBI)
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
+from datetime import datetime
+import json
+import logging
+from pathlib import Path
 from typing import Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -30,10 +36,11 @@ class ModelConfig:
     """
     
     # Base foundation model
-    #model_name: str = "google/medgemma-4b-it"  # MedGemma-4B Instruction-Tuned
-    #model_name: str = "unsloth/Qwen3.5-4B" # Qwen3.5-4B is a strong open-source alternative to MedGemma-4B
-    model_name: str = "Qwen/Qwen3.5-4B" # Hugging Face version of Qwen3.5-4B
+    model_name: str = "google/medgemma-1.5-4b-it"  # Requested default production model
     max_length: int = 2048  # Maximum sequence length (tokens)    
+    force_download: bool = False  # If True, bypass local cache and redownload model
+    cache_dir: Optional[str] = None  # Optional custom HuggingFace cache path
+    _config_version: str = "1.1.0"
 
 
     # LoRA (Low-Rank Adaptation) parameters
@@ -63,6 +70,42 @@ class ModelConfig:
     top_p: float = 0.9
     top_k: int = 50
     repetition_penalty: float = 1.1
+
+    def __post_init__(self):
+        if self.max_length < 2:
+            raise ValueError(f"max_length must be >= 2, got {self.max_length}")
+        if self.lora_r < 1:
+            raise ValueError(f"lora_r must be >= 1, got {self.lora_r}")
+        if not 0.0 <= self.lora_dropout <= 1.0:
+            raise ValueError(f"lora_dropout must be in [0, 1], got {self.lora_dropout}")
+        if not 0.0 < self.temperature <= 5.0:
+            raise ValueError(f"temperature must be in (0, 5], got {self.temperature}")
+        if not 0.0 < self.top_p <= 1.0:
+            raise ValueError(f"top_p must be in (0, 1], got {self.top_p}")
+
+    def save(self, path: Path) -> None:
+        """Save config with version metadata."""
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = asdict(self)
+        payload["_saved_at"] = datetime.now().isoformat()
+        with open(path, "w") as f:
+            json.dump(payload, f, indent=2)
+
+    @classmethod
+    def load(cls, path: Path) -> "ModelConfig":
+        """Load config and warn on version mismatches."""
+        with open(path, "r") as f:
+            payload = json.load(f)
+        saved_version = payload.pop("_config_version", "0.0.0")
+        payload.pop("_saved_at", None)
+        if saved_version != cls()._config_version:
+            logger.warning(
+                "ModelConfig version mismatch: saved=%s current=%s",
+                saved_version,
+                cls()._config_version,
+            )
+        return cls(**payload)
 
 
 @dataclass
@@ -156,6 +199,19 @@ class DataConfig:
     think_weight_synth_high: float = 0.45
     think_weight_synth_low: float = 0.20
 
+    def __post_init__(self):
+        if self.max_patients < 1:
+            raise ValueError(f"max_patients must be >= 1, got {self.max_patients}")
+        if self.max_o1_examples < 0:
+            raise ValueError(f"max_o1_examples must be >= 0, got {self.max_o1_examples}")
+        if not 0 < self.train_test_split < 1:
+            raise ValueError(f"train_test_split must be in (0, 1), got {self.train_test_split}")
+        if not (0.0 <= self.think_weight_synth_low <= self.think_weight_synth_high <= self.think_weight_gold):
+            raise ValueError(
+                "Expected think_weight_synth_low <= think_weight_synth_high <= think_weight_gold; "
+                f"got {self.think_weight_synth_low}, {self.think_weight_synth_high}, {self.think_weight_gold}"
+            )
+
 
 @dataclass
 class SFTConfig:
@@ -206,6 +262,20 @@ class SFTConfig:
     
     # Reproducibility
     seed: int = 42
+
+    def __post_init__(self):
+        if self.num_epochs < 1:
+            raise ValueError(f"num_epochs must be >= 1, got {self.num_epochs}")
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
+        if self.gradient_accumulation_steps < 1:
+            raise ValueError(
+                f"gradient_accumulation_steps must be >= 1, got {self.gradient_accumulation_steps}"
+            )
+        if not 0.0 < self.learning_rate < 1.0:
+            raise ValueError(f"learning_rate must be in (0, 1), got {self.learning_rate}")
+        if self.max_grad_norm <= 0:
+            raise ValueError(f"max_grad_norm must be > 0, got {self.max_grad_norm}")
 
 
 @dataclass
@@ -273,6 +343,38 @@ class GRPOConfig:
     sanity_num_iterations: int = 2  # Max iterations when sanity mode is enabled
     sanity_num_generations_per_prompt: int = 2  # Max K generations in sanity mode
     sanity_max_prompts_per_batch: int = 2  # Max prompts consumed from each sampled batch
+    early_stop_patience: int = 5  # Reward plateau patience window
+    early_stop_min_delta: float = 0.01  # Reward plateau min average change
+
+    def __post_init__(self):
+        if self.num_iterations < 1:
+            raise ValueError(f"num_iterations must be >= 1, got {self.num_iterations}")
+        if self.batch_size < 1:
+            raise ValueError(f"batch_size must be >= 1, got {self.batch_size}")
+        if self.num_generations_per_prompt < 1:
+            raise ValueError(
+                f"num_generations_per_prompt must be >= 1, got {self.num_generations_per_prompt}"
+            )
+        if not 0.0 < self.learning_rate < 1.0:
+            raise ValueError(f"learning_rate must be in (0, 1), got {self.learning_rate}")
+        if self.clip_range <= 0:
+            raise ValueError(f"clip_range must be > 0, got {self.clip_range}")
+        if self.target_kl <= 0:
+            raise ValueError(f"target_kl must be > 0, got {self.target_kl}")
+        if self.gradient_accumulation_steps < 1:
+            raise ValueError(
+                f"gradient_accumulation_steps must be >= 1, got {self.gradient_accumulation_steps}"
+            )
+        if self.early_stop_patience < 2:
+            raise ValueError(f"early_stop_patience must be >= 2, got {self.early_stop_patience}")
+        if self.early_stop_min_delta < 0:
+            raise ValueError(f"early_stop_min_delta must be >= 0, got {self.early_stop_min_delta}")
+
+        if self.num_iterations > 10000:
+            logger.warning(
+                "Large num_iterations=%s; training may take a long time.",
+                self.num_iterations,
+            )
 
 
 @dataclass

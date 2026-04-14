@@ -54,7 +54,7 @@ def _compute_weighted_causal_lm_loss(logits, labels, sample_weights=None):
     return (per_example_loss * weights).sum() / weights.sum().clamp_min(1e-8)
 
 
-def run_sft_training(model, train_dataset, eval_dataset, config):
+def run_sft_training(model, train_dataset, eval_dataset, config, resume_from_checkpoint=None):
     """
     Run supervised fine-tuning (Phase 1).
     
@@ -204,7 +204,7 @@ def run_sft_training(model, train_dataset, eval_dataset, config):
         logger.info("Starting training...")
         logger.info("")
         
-        train_result = trainer.train()
+        train_result = trainer.train(resume_from_checkpoint=resume_from_checkpoint)
         
         # Save final model
         logger.info("")

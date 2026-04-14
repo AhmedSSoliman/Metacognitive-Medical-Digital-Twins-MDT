@@ -7,6 +7,7 @@ Handles model loading, LoRA configuration, and generation.
 import logging
 from pathlib import Path
 from typing import Optional
+import time
 
 import torch
 from transformers import (
@@ -92,13 +93,24 @@ class MedicalDigitalTwinModel:
             bnb_4bit_quant_type=self.config.bnb_4bit_quant_type,
             bnb_4bit_use_double_quant=self.config.use_nested_quant
         )
+
+        cache_root = Path(self.config.cache_dir).expanduser() if self.config.cache_dir else Path.home() / ".cache" / "mdt_models"
+        cache_root.mkdir(parents=True, exist_ok=True)
+        model_cache = cache_root / self.config.model_name.replace("/", "_")
         
         # Load model
+        load_id = str(model_cache) if model_cache.exists() and not self.config.force_download else self.config.model_name
+        if load_id == self.config.model_name:
+            logger.info("Downloading model: %s", self.config.model_name)
+        else:
+            logger.info("Loading cached model from: %s", load_id)
+
         self.model = AutoModelForCausalLM.from_pretrained(
-            self.config.model_name,
+            load_id,
             quantization_config=bnb_config,
             device_map="auto",
-            trust_remote_code=True
+            trust_remote_code=True,
+            cache_dir=str(cache_root)
         )
         
         self.model = prepare_model_for_kbit_training(self.model)
@@ -114,6 +126,13 @@ class MedicalDigitalTwinModel:
         )
         
         self.model = get_peft_model(self.model, lora_config)
+
+        if load_id == self.config.model_name and not model_cache.exists():
+            try:
+                self.model.save_pretrained(str(model_cache))
+                logger.info("Cached base model at: %s", model_cache)
+            except Exception as e:
+                logger.warning("Could not persist local model cache: %s", e)
         
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -248,6 +267,48 @@ class MedicalDigitalTwinModel:
             "eos_token_id": self.tokenizer.eos_token_id,
             "bos_token_id": self.tokenizer.bos_token_id,
         }
+
+    def get_generation_diagnostics(self, prompt: str, detailed: bool = False) -> dict:
+        """Return prompt/model diagnostics before generation."""
+        max_prompt_tokens = max(2, int(self.config.max_length) - 1)
+        info = self._get_prompt_debug_info(prompt, max_prompt_tokens=max_prompt_tokens)
+
+        if torch.cuda.is_available():
+            info["cuda_memory_allocated_gb"] = round(torch.cuda.memory_allocated() / 1e9, 4)
+            info["cuda_memory_reserved_gb"] = round(torch.cuda.memory_reserved() / 1e9, 4)
+        else:
+            info["cuda_memory_allocated_gb"] = 0.0
+            info["cuda_memory_reserved_gb"] = 0.0
+
+        est_tokens = max(1, info["prompt_token_count"]) + 64
+        info["estimated_generation_time_sec"] = round(0.01 * est_tokens, 3)
+
+        if detailed:
+            text = prompt.lower()
+            markers = ["because", "therefore", "suggest", "likely", "risk", "differential"]
+            info["reasoning_marker_count"] = sum(1 for marker in markers if marker in text)
+            info["contains_special_markers"] = any(tok in prompt for tok in ["<think>", "<patient_state>", "<user_belief>"])
+
+        return info
+
+    def _generate_with_oom_recovery(self, generation_kwargs: dict, max_retries: int = 3):
+        """Run model.generate with OOM retry/backoff recovery."""
+        for attempt in range(max_retries):
+            try:
+                with torch.no_grad():
+                    return self.model.generate(**generation_kwargs)
+            except RuntimeError as e:
+                if "out of memory" in str(e).lower() and attempt < max_retries - 1:
+                    logger.warning(
+                        "Generation OOM (attempt %s/%s). Clearing cache and retrying.",
+                        attempt + 1,
+                        max_retries,
+                    )
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    time.sleep(2 ** attempt)
+                    continue
+                raise
     
     def generate(
         self,
@@ -316,19 +377,23 @@ class MedicalDigitalTwinModel:
                     f"token id max={token_id_max}, output rows={output_rows}."
                 )
         
-        with torch.no_grad():
-            outputs = self.model.generate(
+        outputs = self._generate_with_oom_recovery(
+            {
                 **inputs,
-                max_new_tokens=max_new_tokens,
-                temperature=kwargs.get('temperature', self.config.temperature),
-                top_p=kwargs.get('top_p', self.config.top_p),
-                top_k=kwargs.get('top_k', self.config.top_k),
-                do_sample=True,
-                pad_token_id=self.tokenizer.pad_token_id,
-                eos_token_id=self.tokenizer.eos_token_id
-            )
+                "max_new_tokens": max_new_tokens,
+                "temperature": kwargs.get('temperature', self.config.temperature),
+                "top_p": kwargs.get('top_p', self.config.top_p),
+                "top_k": kwargs.get('top_k', self.config.top_k),
+                "do_sample": True,
+                "pad_token_id": self.tokenizer.pad_token_id,
+                "eos_token_id": self.tokenizer.eos_token_id,
+            }
+        )
         
         generated_text = self.tokenizer.decode(outputs[0], skip_special_tokens=False)
+        del outputs
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         return generated_text
     
     def generate_stream(

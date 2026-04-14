@@ -18,7 +18,7 @@ Institution: University of Florida, Health Outcomes & Biomedical Informatics (HO
 import re
 import logging
 from dataclasses import dataclass
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -364,6 +364,65 @@ class CognitiveStreamParser:
         # All validation checks passed
         logger.debug("Stream validation passed")
         return True, None
+
+    def validate_with_details(self, streams: CognitiveStreams) -> Dict[str, Any]:
+        """Validate streams and return per-stream details with warnings."""
+        result: Dict[str, Any] = {
+            "is_valid": True,
+            "errors": [],
+            "warnings": [],
+            "stream_validity": {
+                "think": True,
+                "patient_state": True,
+                "user_belief": True,
+            },
+        }
+
+        if not streams.think:
+            result["errors"].append("<think> stream missing")
+            result["stream_validity"]["think"] = False
+            result["is_valid"] = False
+        elif len(streams.think) < self.config.min_think_length:
+            result["warnings"].append("<think> stream below recommended length")
+
+        if not streams.patient_state:
+            result["errors"].append("<patient_state> stream missing")
+            result["stream_validity"]["patient_state"] = False
+            result["is_valid"] = False
+        elif len(streams.patient_state) < self.config.min_patient_state_length:
+            result["warnings"].append("<patient_state> stream below recommended length")
+
+        if not streams.user_belief:
+            result["errors"].append("<user_belief> stream missing")
+            result["stream_validity"]["user_belief"] = False
+            result["is_valid"] = False
+        elif len(streams.user_belief) < self.config.min_user_belief_length:
+            result["warnings"].append("<user_belief> stream below recommended length")
+
+        return result
+
+    def analyze_stream_quality(self, streams: CognitiveStreams) -> Dict[str, float]:
+        """Estimate stream quality metrics for monitoring/debugging."""
+        quality: Dict[str, float] = {
+            "think_reasoning_depth": 0.0,
+            "patient_state_coding": 0.0,
+            "user_belief_completeness": 0.0,
+        }
+
+        think_markers = ["because", "therefore", "suggest", "indicat", "likely", "differential"]
+        lower_think = streams.think.lower()
+        think_hits = sum(1 for marker in think_markers if marker in lower_think)
+        quality["think_reasoning_depth"] = min(1.0, think_hits / 3.0)
+
+        loinc_count = len(re.findall(r"LOINC:\d+-\d+", streams.patient_state or ""))
+        quality["patient_state_coding"] = min(1.0, loinc_count / 3.0)
+
+        belief_attrs = ["literacy", "emotional", "strategy"]
+        lower_belief = streams.user_belief.lower()
+        belief_hits = sum(1 for attr in belief_attrs if attr in lower_belief)
+        quality["user_belief_completeness"] = belief_hits / float(len(belief_attrs))
+
+        return quality
     
     def extract_stream(self, text: str, stream_name: str) -> str:
         """
