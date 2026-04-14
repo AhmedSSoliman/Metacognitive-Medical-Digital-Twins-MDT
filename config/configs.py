@@ -36,7 +36,7 @@ class ModelConfig:
     """
     
     # Base foundation model
-    model_name: str = "google/medgemma-1.5-4b-it"  # Requested default production model
+    model_name: str = "nvidia/Nemotron-Mini-4B-Instruct"  # Requested default production model
     max_length: int = 2048  # Maximum sequence length (tokens)    
     force_download: bool = False  # If True, bypass local cache and redownload model
     cache_dir: Optional[str] = None  # Optional custom HuggingFace cache path

@@ -3,7 +3,7 @@ from config.configs import ModelConfig, SFTConfig
 
 def test_model_config_default_medgemma():
     config = ModelConfig()
-    assert config.model_name == "google/medgemma-1.5-4b-it"
+    assert config.model_name == "nvidia/Nemotron-Mini-4B-Instruct"
 
 
 def test_sft_config_validates_positive_epochs():

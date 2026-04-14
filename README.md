@@ -332,7 +332,7 @@ Technical methodology (with full figure):
 
 ### Model Specifications
 
-- **Base Model:** `google/medgemma-1.5-4b-it` (Google)
+- **Base Model:** `nvidia/Nemotron-Mini-4B-Instruct` (NVIDIA)
 - **Fine-tuning:** LoRA (rank=16, α=32) with 4-bit quantization
 - **Context Length:** 2048 tokens
 - **Parameters:** ~4B total, ~25M trainable (LoRA)
