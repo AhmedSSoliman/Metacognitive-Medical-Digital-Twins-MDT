@@ -1,14 +1,16 @@
 """FastAPI serving entrypoint for MDT model inference."""
 
 from functools import lru_cache
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
 from config.configs import CognitiveArchitectureConfig, ModelConfig
 from core.cognitive_streams import CognitiveStreamParser
-from models.mdt_model import MedicalDigitalTwinModel
+
+if TYPE_CHECKING:
+    from models.mdt_model import MedicalDigitalTwinModel
 
 
 app = FastAPI(title="MDT Clinical AI API", version="1.0.0")
@@ -29,7 +31,9 @@ class ClinicalResponse(BaseModel):
 
 
 @lru_cache(maxsize=1)
-def load_cached_model() -> MedicalDigitalTwinModel:
+def load_cached_model() -> "MedicalDigitalTwinModel":
+    from models.mdt_model import MedicalDigitalTwinModel
+
     config = ModelConfig()
     return MedicalDigitalTwinModel(config, use_demo_model=False)
 
