@@ -1,5 +1,6 @@
 # Large data files
 mimiciv/
+mimic-iv-ext-clif/
 *.csv
 *.json
 
@@ -82,3 +83,10 @@ core.python-*
 core.*
 .gradio/
 *.log
+
+# Local scratch/debug artifacts
+unsloth_compiled_cache/
+look/
+look.py
+look.ipynb
+wget-log
