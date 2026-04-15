@@ -560,9 +560,9 @@ def handle_train_grpo(args):
     print("GRPO TRAINING MODE - PHASE 4")
     print("="*80 + "\n")
     
-    # Check for SFT checkpoint
+    # Check for SFT checkpoint (respect --output-dir when provided)
     sft_config = SFTConfig()
-    checkpoint_path = Path(sft_config.output_dir)
+    checkpoint_path = Path(args.output_dir) / "sft" if args.output_dir else Path(sft_config.output_dir)
     
     if not checkpoint_path.exists():
         print("❌ No SFT checkpoint found!")
@@ -579,13 +579,18 @@ def handle_train_grpo(args):
     print("-"*80 + "\n")
     
     model_config = ModelConfig()
-    model = MedicalDigitalTwinModel(model_config, use_demo_model=False)
+    model = MedicalDigitalTwinModel(model_config, use_demo_model=bool(args.use_demo))
 
     # Prepare GRPO config early (needed for resume path resolution)
     grpo_config = GRPOConfig()
     if args.output_dir:
         output_path = Path(args.output_dir)
         grpo_config.output_dir = str(output_path / "grpo")
+
+    if args.use_demo:
+        # Keep demo smoke runs fast and within GPT-2 context/compute limits.
+        grpo_config.sanity_check_mode = True
+        grpo_config.generation_max_length = min(int(grpo_config.generation_max_length), 256)
 
     if args.grpo_iterations is not None:
         grpo_config.num_iterations = args.grpo_iterations

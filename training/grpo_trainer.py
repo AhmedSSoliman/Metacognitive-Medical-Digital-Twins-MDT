@@ -745,10 +745,15 @@ def generate_k_responses_batched(
             max_length=max_length,
         ).to(model.model.device)
 
+        # Respect model context window (critical for GPT-2 demo smoke runs).
+        model_ctx = int(getattr(model.model.config, "n_positions", max_length))
+        input_len = int(inputs["input_ids"].shape[1])
+        max_new_tokens = max(1, min(int(max_length), max(1, model_ctx - input_len - 1)))
+
         with torch.no_grad():
             outputs = model.model.generate(
                 **inputs,
-                max_new_tokens=max_length,
+                max_new_tokens=max_new_tokens,
                 temperature=temperature,
                 top_p=top_p,
                 do_sample=True,
