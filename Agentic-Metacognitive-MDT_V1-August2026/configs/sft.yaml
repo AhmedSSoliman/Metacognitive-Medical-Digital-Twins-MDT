@@ -1,0 +1,25 @@
+# Phase 1 SFT hyperparameters -- current working baseline recipe
+# (phase1_sft_v2_reproduction). Values match scripts/run_sft.sh exactly;
+# keep both in sync if either changes. See
+# ../Agentic-DT_V1-July/docs/hypothesis_log.md for why this specific
+# recipe (not the originally-reported-97% one) is the honest baseline.
+
+base_model: google/medgemma-4b-it
+tier_one_dataset: FreedomIntelligence/medical-o1-reasoning-SFT
+synthetic_vignettes: ./data/synthetic/stream_format_vignettes_original36_backup.jsonl
+output_dir: ./checkpoints/phase1_sft_v2_reproduction
+
+soft_alignment: false   # REQUIRED false -- see scripts/run_sft.sh comment
+num_train_epochs: 3
+per_device_train_batch_size: 4
+gradient_accumulation_steps: 8
+learning_rate: 2.0e-4
+lora_r: 32
+lora_alpha: 32
+logging_steps: 5
+save_steps: 15
+
+# seed: intentionally unset here to match the original v2 recipe (which
+# predates the --seed argument's existence, so it implicitly used HF's
+# default of 42). Pass --seed explicitly on the CLI for reproducibility
+# experiments -- see training/sft.py's --seed argument.

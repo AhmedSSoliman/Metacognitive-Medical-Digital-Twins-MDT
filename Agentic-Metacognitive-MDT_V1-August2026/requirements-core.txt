@@ -1,0 +1,15 @@
+# Base/runtime requirements -- data & scientific stack only.
+# Ported from Agentic-DT_V1-July/requirements.txt, split into
+# requirements.txt (base), requirements-train.txt (heavy ML/training stack),
+# and requirements-dev.txt (test tooling) for this package layout.
+
+# Data / scientific
+pandas>=2.2.0
+numpy>=1.26.0
+scipy>=1.13.0
+scikit-learn>=1.5.0
+pyarrow>=16.0.0  # for parquet I/O
+
+# Utilities
+tqdm>=4.66.0
+pyyaml>=6.0

@@ -1,0 +1,19 @@
+# Phase 2 GRPO hyperparameters. Values match scripts/run_grpo.sh exactly;
+# keep both in sync if either changes.
+
+base_model: ./checkpoints/phase1_sft_v2_reproduction
+prompt_dataset: ./data/processed/derivation/grpo_prompts.parquet
+output_dir: ./checkpoints/phase2_grpo_v2repro_base
+
+num_generations: 4
+max_steps: 200
+save_steps: 5
+hypergraph_mode: interim   # or "learned", once a clinically-reviewed hypergraph exists
+
+kl_beta: 0.01   # KL penalty vs. reference policy. Added 2026-08-12 -- previously
+                # unset, silently inheriting TRL's own default of 0.0 (no KL
+                # constraint at all). See training/grpo.py's --kl_beta help.
+
+# UNSLOTH_FORCE_FLOAT32=1 is required (set as an env var in scripts/run_grpo.sh,
+# not a trainer arg) -- see that script's comment for the full NaN-collapse
+# history (job 37933496) that makes it non-optional.

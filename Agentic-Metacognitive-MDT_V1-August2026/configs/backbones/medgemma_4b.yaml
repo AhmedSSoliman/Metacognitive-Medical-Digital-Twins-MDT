@@ -1,0 +1,23 @@
+# MedGemma-4B backbone config -- the ONLY backbone validated against real
+# GPU/data in this project as of this port (2026-08-12). Other backbones
+# (Nemotron variants, OctoMed-7B) have been discussed but not committed to;
+# do not add config files for them without an explicit decision to do so
+# (see README.md's "Known placeholders" section).
+
+name: medgemma-4b-it
+hf_repo: google/medgemma-4b-it
+# Resolves to the pre-quantized Unsloth mirror at load time (confirmed via
+# checkpoint README.md model cards across every Phase 1 run in the source
+# repo's investigation): unsloth/medgemma-4b-it-unsloth-bnb-4bit
+
+quantization: bnb-4bit   # via the unsloth-bnb-4bit mirror; not NVFP4
+lora_target_modules: null   # Unsloth's get_peft_model default target-module set is used; see training/backbone.py
+
+# Numerical-stability requirement, NOT optional for training on this
+# backbone: raw pre-clip grad_norm was observed swinging across six orders
+# of magnitude and collapsing to NaN within 10-20 steps without this flag,
+# on real (long, diverse) training data. See training/sft.py's top-level
+# comments for the full diagnostic trail.
+requires_unsloth_force_float32: true
+
+max_seq_len: null   # uses training/sft.py's --max_seq_len default; see that file

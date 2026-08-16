@@ -1,0 +1,11 @@
+# Development/test requirements.
+# Not present as a separate file in the source repo (Agentic-DT_V1-July) --
+# that repo has no requirements-dev.txt; pytest is assumed to be present in
+# the shared conda env (/blue/prismap-ai-core/Ahmed/envs/prismap_digitaltwin_env,
+# per the slurm scripts). Versions here are floors, not pinned exactly from
+# source since no source pin exists.
+
+-r requirements.txt
+
+pytest>=7.4.0
+pytest-cov>=4.1.0

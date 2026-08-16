@@ -1,0 +1,24 @@
+# Training/inference requirements -- heavy ML stack.
+# Ported from Agentic-DT_V1-July/requirements.txt ("Core ML" and
+# "Experiment tracking" / "Evaluation reporting" sections).
+# Install alongside requirements.txt: pip install -r requirements.txt -r requirements-train.txt
+
+-r requirements.txt
+
+# Core ML
+torch>=2.2.0
+transformers>=4.42.0
+peft>=0.11.0
+trl>=0.9.4
+unsloth  # required for training/grpo_trainer.py's Unsloth+TRL integration path
+bitsandbytes>=0.43.0
+accelerate>=0.31.0
+datasets>=2.19.0
+sentence-transformers>=3.0.0
+
+# Experiment tracking (optional but recommended)
+wandb>=0.17.0
+
+# Evaluation reporting (scripts/run_evaluation.py's generate_visual_report)
+matplotlib>=3.8.0
+python-docx>=1.1.0

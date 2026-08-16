@@ -1,0 +1,13 @@
+# Phase 3 hypergraph construction settings. Values match
+# scripts/build_hypergraph.sh exactly; keep both in sync if either changes.
+
+min_support: 30
+cohort_scope: full   # "full" or "cardiac" -- see core/cohort/terminology.py's apply_cohort_scope
+
+timeseries_path: ./cache/mimic/derivation_timeseries.parquet
+output_path_template: ./hypergraph/derived_hypergraph_{cohort_scope}_{job_id}.json
+
+# Output is ALWAYS versioned per job, never written to the fixed
+# ./hypergraph/derived_hypergraph.json path directly -- that promotion
+# happens manually after IC3 clinical review. See
+# core/hypergraph/construction.py and scripts/build_hypergraph.sh.

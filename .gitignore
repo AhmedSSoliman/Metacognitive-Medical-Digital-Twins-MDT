@@ -3,6 +3,12 @@ mimiciv/
 mimic-iv-ext-clif/
 *.csv
 *.json
+# Exceptions: small, aggregate (non-patient-level) project outputs that
+# are safe and useful to track -- evaluation metric summaries and the
+# Phase 3 hyperedge co-occurrence statistics (aggregate variable-pair
+# stats, not raw patient records).
+!Agentic-Metacognitive-MDT_V1-August2026/evaluation/reports/*.json
+!Agentic-Metacognitive-MDT_V1-August2026/hypergraph/*.json
 
 # Model outputs and checkpoints
 outputs/
@@ -11,9 +17,22 @@ results/
 *.bin
 *.pt
 *.pth
+*.model
 checkpoint-*/
 best_model/
 final_model/
+
+# MIMIC-derived cache and other data files (PhysioNet DUA -- never push
+# real patient-derived data, even de-identified, to a public/shared repo)
+*.parquet
+cache/
+
+# TensorBoard / trainer run logs, compiled-kernel caches, egg-info
+events.out.tfevents.*
+runs/
+unsloth_compiled_cache/
+*.egg-info/
+*.lock
 
 # Python cache
 __pycache__/

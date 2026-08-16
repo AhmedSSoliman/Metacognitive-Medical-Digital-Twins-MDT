@@ -1,0 +1,25 @@
+{
+  "topological_fidelity": 0.9266666666666666,
+  "deterioration_auroc": 0.5760287081339713,
+  "deterioration_auprc": 0.4204439594679062,
+  "trajectory_mae": null,
+  "structural_empathy_mean": 0.6363333333333333,
+  "format_compliance_rate": 0.4666666666666667,
+  "deployment": {
+    "schema_validity_rate": 0.4666666666666667,
+    "tool_call_success_rate": 1.0,
+    "latency_p50_ms": 73852.79786586761,
+    "latency_p95_ms": 140690.27683734897
+  },
+  "n_examples": 300,
+  "deterioration_detection": {
+    "auroc": 0.5760287081339713,
+    "auprc": 0.4204439594679062,
+    "auroc_ci_lower": 0.5058136647850093,
+    "auroc_ci_upper": 0.6347314548855381,
+    "precision": 0.37037037037037035,
+    "recall": 1.0,
+    "f2_score": 0.746268656716418,
+    "threshold": 0.5
+  }
+}

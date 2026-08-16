@@ -1,0 +1,14 @@
+# Evaluation defaults. Values match the argparse defaults in
+# evaluation/run_evaluation.py; keep both in sync if either changes.
+
+hypergraph_mode: interim   # or "learned"
+hypergraph_path: ""
+
+max_examples: null   # null = full eval_prompt_dataset; use a small int (e.g. 30) for a smoke eval
+max_new_tokens: 768
+deterioration_threshold: 0.5
+
+n_bootstrap_ci: 500
+ci_alpha: 0.95
+
+skip_visual_report: false   # true skips the docx/matplotlib report -- useful for quick smoke runs
